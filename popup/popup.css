@@ -1,0 +1,10 @@
+body { width: 340px; margin: 12px; font: 13px/1.4 system-ui, sans-serif; }
+h1 { font-size: 16px; margin: 0 0 8px; }
+h2 { font-size: 12px; margin: 12px 0 4px; color: #555; }
+button { width: 100%; padding: 8px; font-size: 13px; cursor: pointer; }
+button:disabled { opacity: 0.6; cursor: default; }
+button.dev { margin-top: 8px; font-size: 11px; }
+#status { margin: 8px 0 0; color: #333; white-space: pre-wrap; }
+#list { margin: 0; padding-left: 16px; max-height: 180px; overflow: auto; }
+#list li { margin-bottom: 2px; }
+#list small { color: #777; }

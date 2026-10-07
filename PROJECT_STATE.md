@@ -13,57 +13,85 @@
 ---
 
 ## Last updated
-`2026-10-06 — session 1`
+`2026-10-07 — end of session 1`
 
 ## Current phase
-Bottom-up build, step 1 of 7 complete (`lib/storage.js` written). Next: step 2,
-content extraction.
+Bottom-up build, steps 1–4 done and tested in Chrome. Next: step 5,
+`lib/embeddings.js`.
 
-## What's working right now
-- `lib/storage.js` is written (IndexedDB wrapper: pages, chunks, nodes, edges;
-  vectors stored as Float32Array). **Not yet run or tested in the browser.**
-- Project docs and sync SOP are set up (see ARCHITECTURE.md → "Sync SOP").
-- Nothing else exists yet. `manifest.json` references files that have not been
-  created (service worker, popup, extractor, icons), so the extension will not
-  load until those exist.
+## What's working right now (all tested in Chrome, session 1)
+- `lib/storage.js`: IndexedDB wrapper. Round trip verified: page upsert,
+  chunks stored as `Float32Array`, `page.chunkIds` updated, `deletePage`
+  removes page and chunks.
+- `content/extractor.js` + vendored `lib/readability.js` (90,944 bytes,
+  Apache-2.0 header intact, downloaded from mozilla/readability main on
+  2026-10-07). Wikipedia/doc pages report `readability`; app pages report
+  `readability` or `fallback`.
+- `background/service-worker.js` v0: WRAP_UP injects the extractor into open
+  http(s), non-incognito tabs and saves via `savePage`. Dev hook
+  `globalThis.storage` is still present (remove before publishing).
+- `popup/` v0: permission request on click, wrap-up, saved-pages list,
+  "Clear all (dev)".
+- Re-running wrap-up upserts by URL (stored count stayed at 27 across runs).
+- Placeholder icons, updated `manifest.json` (no content scripts, optional
+  host permissions).
+- GitHub repo: https://github.com/rishav1729/Smriti (reference only; Claude
+  cannot read its file contents).
 
-## What's broken / in progress
-- Nothing known broken. `storage.js` is untested: a quick save/read round trip
-  from the service worker console is still to do once the service worker exists.
+## What's broken / known issues
+- Readability can grab a partial subtree on app-style pages (a Claude chat page
+  dropped from 9,567 to 1,009 chars). Decide a gating rule (see ARCHITECTURE.md
+  → Known issues).
+- Thin pages are saved (e.g. 198 chars). Add a minimum-length filter.
+- Asleep/discarded or still-loading tabs can fail injection with a misleading
+  "must request permission" error; waking the tab and retrying fixed it.
+- Node.js/npm is NOT installed on the dev machine (Windows, PowerShell).
+  Matters for bundling transformers.js next.
 
 ## Files touched this session
-- `lib/storage.js` (new, complete; interface documented in ARCHITECTURE.md →
-  "Interfaces", so its source is not pasted below. Paste it from VS Code only
-  if we need to edit it.)
-- `ARCHITECTURE.md` (updated: Float32Array schema, Interfaces section, Sync SOP,
-  pending decisions, build order, MVP checkbox)
-- `PROJECT_STATE.md` (this file)
+- `lib/storage.js`, `lib/readability.js` (vendored), `content/extractor.js`
+- `background/service-worker.js`, `popup/popup.html|js|css`
+- `icons/icon16|48|128.png` (placeholders)
+- `manifest.json` (removed `content_scripts`, `web_accessible_resources`,
+  `tabs`, `activeTab`; `<all_urls>` is now an optional host permission)
+- `ARCHITECTURE.md`, `PROJECT_STATE.md`
 
 ## Decisions made this session
-- Vectors stored as `Float32Array` (deviates from the original "stored as array"
-  note; ARCHITECTURE.md updated).
-- Sync SOP adopted: VS Code/git is the source of truth; the Project knowledge
-  base holds only ARCHITECTURE.md, PROJECT_STATE.md and manifest.json; finished
-  modules are documented as signatures in the Interfaces section.
+- Vectors stored as `Float32Array`.
+- Sync SOP adopted (ARCHITECTURE.md → Sync SOP). Knowledge base holds only
+  ARCHITECTURE.md, PROJECT_STATE.md, manifest.json.
+- On-demand extraction via `chrome.scripting.executeScript`; host access
+  requested at runtime from the popup click; incognito and non-http(s) tabs are
+  never read. Closed tabs are not captured (v2 idea).
 - `savePage` upserts on unique `url`; `saveChunks` replaces a page's chunks and
   updates `page.chunkIds` in one transaction.
+- Dynamic `import()` is not allowed in service workers, hence the dev-only
+  `globalThis.storage` hook.
 
 ## Next immediate step
-Build `content/extractor.js` and vendor `lib/readability.js`. Decide the
-manifest change below first, since it determines how the extractor is injected.
+Build `lib/embeddings.js` and wire it into wrap-up. Decide first (my
+recommendations, not yet agreed):
+1. Run inference in an offscreen document (`chrome.offscreen`), not the service
+   worker.
+2. Bundle all-MiniLM-L6-v2 in `models/`, no CDN fetch at runtime.
+3. Chunking: ~200 words, small overlap, paragraph boundaries.
+Also needed: a way to get transformers.js into the repo. Either install Node.js
+and bundle, or vendor a prebuilt dist file manually.
+Small cleanups to bundle in: minimum content length filter, Readability gating.
 
 ## Open questions / blockers
-- **Manifest content script:** switch from `<all_urls>` auto-injection to
-  on-demand `chrome.scripting.executeScript` on "Wrap up session"? (Recommended:
-  more privacy-consistent, fits the batch design. Awaiting your call.)
-- **Manifest `web_accessible_resources`:** remove `models/*` and `lib/*` exposure?
-  (Recommended; can wait until embeddings work.)
-- Optional: want a small test snippet for storage.js round trip?
+- Offscreen document vs other approach for WASM inference (see above).
+- How to vendor transformers.js and model files without Node (or install Node).
+- Chunk size and overlap values.
+- Interview-worthy so far: on-demand injection with runtime-granted host
+  permissions (privacy design), transactional chunk replacement in storage,
+  Readability on a cloned DOM with fallback. Routine: popup UI, icons,
+  IndexedDB CRUD.
 
 ---
 
 ## Full current file contents
 
-No source files need to be pasted for the next step. `lib/storage.js` is stable
-and covered by the Interfaces section of ARCHITECTURE.md. `manifest.json` is
-unchanged from the Project knowledge base copy.
+No source files are pasted here. Paste from VS Code only the files we are about
+to edit. Replace the Project knowledge base copies of `ARCHITECTURE.md`,
+`PROJECT_STATE.md` and `manifest.json` with the updated versions.
