@@ -1,0 +1,32 @@
+{
+  "name": "smriti",
+  "version": "1.0.0",
+  "description": "- [Mozilla Readability](https://github.com/mozilla/readability) (Apache-2.0), vendored in `lib/readability.js`, used to extract the main text from web pages.",
+  "main": "index.js",
+  "directories": {
+    "lib": "lib"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "node build.mjs",
+    "download-model": "node download-model.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rishav1729/Smriti.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/rishav1729/Smriti/issues"
+  },
+  "homepage": "https://github.com/rishav1729/Smriti#readme",
+  "dependencies": {
+    "@huggingface/transformers": "^4.3.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}
