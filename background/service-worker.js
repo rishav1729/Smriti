@@ -1,16 +1,19 @@
 // background/service-worker.js
 // Orchestrator. Wrap-up = inject extractor into open tabs -> save pages
-// -> chunk + embed each new/changed page -> save chunks -> cluster new pages.
+// -> chunk + embed each new/changed page -> save chunks -> cluster new pages
+// -> name groups (local label, optional Groq).
 // Progress and the final result are written to chrome.storage.local so the
 // popup can show them even if it was closed and reopened mid-run.
 import * as embeddings from '../lib/embeddings.js';
 import * as storage from '../lib/storage.js';
 import * as clustering from '../lib/clustering.js';
+import * as summarizer from '../lib/summarizer.js';
 
 // DEV ONLY: remove before publishing.
 globalThis.embeddings = embeddings;
 globalThis.storage = storage;
 globalThis.clustering = clustering;
+globalThis.summarizer = summarizer;
 
 const MIN_CONTENT_CHARS = 300;
 const STATUS_KEY = 'wrapUpStatus';
@@ -45,6 +48,8 @@ async function wrapUpSession() {
     failed: [],
     clustered: null,
     clusterError: null,
+    named: null,
+    nameError: null,
   };
 
   try {
@@ -127,27 +132,52 @@ async function wrapUpSession() {
     summary.clusterError = String(err?.message || err);
   }
 
+  // 4. Name groups: local label always, Groq only if the user turned it on.
+  // Own try/catch: a naming failure must not lose the wrap-up result.
+  try {
+    await setStatus({ state: 'running', stage: 'naming', done: tabs.length, total: tabs.length, startedAt });
+    summary.named = await summarizer.summarizeNodes();
+  } catch (err) {
+    summary.nameError = String(err?.message || err);
+  }
+
   return summary;
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg?.type !== 'WRAP_UP') return;
-
-  if (running) {
-    sendResponse({ ok: false, error: 'A wrap-up is already running.' });
-    return;
+  if (msg?.type === 'WRAP_UP') {
+    if (running) {
+      sendResponse({ ok: false, error: 'A wrap-up is already running.' });
+      return;
+    }
+    running = true;
+    wrapUpSession()
+      .then(async (summary) => {
+        await setStatus({ state: 'done', summary, finishedAt: Date.now() });
+        try { sendResponse({ ok: true, summary }); } catch { /* popup already closed */ }
+      })
+      .catch(async (err) => {
+        const error = String(err?.message || err);
+        await setStatus({ state: 'error', error });
+        try { sendResponse({ ok: false, error }); } catch { /* popup already closed */ }
+      })
+      .finally(() => { running = false; });
+    return true; // keep the channel open for the async response
   }
-  running = true;
-  wrapUpSession()
-    .then(async (summary) => {
-      await setStatus({ state: 'done', summary, finishedAt: Date.now() });
-      try { sendResponse({ ok: true, summary }); } catch { /* popup already closed */ }
-    })
-    .catch(async (err) => {
-      const error = String(err?.message || err);
-      await setStatus({ state: 'error', error });
-      try { sendResponse({ ok: false, error }); } catch { /* popup already closed */ }
-    })
-    .finally(() => { running = false; });
-  return true; // keep the channel open for the async response
+
+  if (msg?.type === 'SUMMARIZE') {
+    // "Name groups now": re-run naming without re-reading tabs.
+    if (running) {
+      sendResponse({ ok: false, error: 'A wrap-up is already running.' });
+      return;
+    }
+    running = true;
+    summarizer.summarizeNodes()
+      .then((result) => { try { sendResponse({ ok: true, result }); } catch { /* popup closed */ } })
+      .catch((err) => {
+        try { sendResponse({ ok: false, error: String(err?.message || err) }); } catch { /* popup closed */ }
+      })
+      .finally(() => { running = false; });
+    return true;
+  }
 });

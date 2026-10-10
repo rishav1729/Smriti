@@ -4,7 +4,10 @@ h2 { font-size: 12px; margin: 12px 0 4px; color: #555; }
 button { width: 100%; padding: 8px; font-size: 13px; cursor: pointer; }
 button:disabled { opacity: 0.6; cursor: default; }
 button.dev { margin-top: 8px; font-size: 11px; }
+input[type="password"] { width: 100%; box-sizing: border-box; padding: 6px; margin: 6px 0 0; font-size: 12px; }
+label.row { display: block; }
+.hint { margin: 6px 0; color: #777; font-size: 11px; }
 #status { margin: 8px 0 0; color: #333; white-space: pre-wrap; }
-#list { margin: 0; padding-left: 16px; max-height: 180px; overflow: auto; }
-#list li { margin-bottom: 2px; }
-#list small { color: #777; }
+#list, #groups { margin: 0; padding-left: 16px; max-height: 180px; overflow: auto; }
+#list li, #groups li { margin-bottom: 2px; }
+#list small, #groups small { color: #777; }

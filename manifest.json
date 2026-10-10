@@ -2,9 +2,9 @@
   "manifest_version": 3,
   "name": "Smriti — Your Browsing Memory",
   "version": "0.1.0",
-  "description": "A local-first knowledge graph built from your open tabs and browsing history. Nothing leaves your machine.",
+  "description": "Groups your open tabs by topic, on your device. Optional AI naming sends only short, anonymized snippets.",
   "permissions": ["storage", "unlimitedStorage", "scripting", "idle", "offscreen"],
-  "optional_host_permissions": ["<all_urls>"],
+  "optional_host_permissions": ["<all_urls>", "https://api.groq.com/*"],
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   },

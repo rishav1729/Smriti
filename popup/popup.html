@@ -8,6 +8,21 @@
   <h1>Smriti</h1>
   <button id="wrap">Wrap up session</button>
   <p id="status">Ready.</p>
+
+  <h2>Groups (<span id="gcount">0</span>)</h2>
+  <ul id="groups"></ul>
+
+  <h2>Group names</h2>
+  <label class="row"><input type="checkbox" id="cloud" /> Name groups with Groq (optional)</label>
+  <input type="password" id="key" placeholder="Groq API key" autocomplete="off" />
+  <p class="hint">
+    Off by default; groups are always named locally. When on, only groups of 2+ pages
+    are sent: page titles and the first 150 characters of up to 4 pages, with links,
+    emails and long numbers removed. Never URLs or full text. Your key is stored on
+    this device only.
+  </p>
+  <button id="name">Name groups now</button>
+
   <h2>Saved pages (<span id="count">0</span>)</h2>
   <ul id="list"></ul>
   <button id="clear" class="dev">Clear all (dev)</button>

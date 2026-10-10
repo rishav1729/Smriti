@@ -2,14 +2,20 @@
 // The popup can be closed at any time (Chrome closes it when you click away).
 // So it never waits for the wrap-up result: it shows whatever the service
 // worker last wrote to chrome.storage.local, and updates live while open.
-import { getAllPages, clearAll } from '../lib/storage.js';
+import { getAllPages, getAllNodes, clearAll } from '../lib/storage.js';
+import { SETTINGS_KEY, GROQ_ORIGIN } from '../lib/summarizer.js';
 
 const STATUS_KEY = 'wrapUpStatus';
 const STALE_MS = 3 * 60 * 1000; // a "running" status not updated for 3 min = worker died
 
 const $ = (id) => document.getElementById(id);
 const btn = $('wrap');
+const nameBtn = $('name');
 const statusEl = $('status');
+const cloudEl = $('cloud');
+const keyEl = $('key');
+
+// ---------- lists ----------
 
 async function refreshList() {
   const pages = (await getAllPages()).sort((a, b) => b.visitedAt - a.visitedAt);
@@ -26,6 +32,28 @@ async function refreshList() {
   }
 }
 
+async function refreshGroups() {
+  const nodes = (await getAllNodes()).sort((a, b) => b.pageIds.length - a.pageIds.length);
+  $('gcount').textContent = nodes.length;
+  const list = $('groups');
+  list.replaceChildren();
+  for (const n of nodes.slice(0, 30)) {
+    const li = document.createElement('li');
+    li.textContent = n.label || '(unnamed)'; // labels can come from a model: textContent only
+    if (n.summary) li.title = n.summary;
+    const small = document.createElement('small');
+    small.textContent =
+      ` ${n.pageIds.length} page${n.pageIds.length === 1 ? '' : 's'}` +
+      (n.labelSource === 'cloud' ? ', Groq' : '');
+    li.append(small);
+    list.append(li);
+  }
+}
+
+const refreshAll = () => Promise.all([refreshList(), refreshGroups()]);
+
+// ---------- status ----------
+
 function formatSummary(s) {
   const lines = [
     `Done. Saved ${s.saved} (new embeddings: ${s.embedded}, unchanged: ${s.unchanged}).`,
@@ -37,11 +65,19 @@ function formatSummary(s) {
     );
   }
   if (s.clusterError) lines.push(`Grouping failed: ${s.clusterError}`);
+  if (s.named) lines.push(formatNamed(s.named));
+  if (s.nameError) lines.push(`Naming failed: ${s.nameError}`);
   if (s.failed.length) {
     lines.push(`Problems (${s.failed.length}):`);
     for (const f of s.failed) lines.push(`- ${f.url}: ${f.error}`);
   }
   return lines.join('\n');
+}
+
+function formatNamed(r) {
+  let line = `Named ${r.local} group${r.local === 1 ? '' : 's'} locally, ${r.cloud} with Groq.`;
+  if (r.note) line += ` ${r.note}`;
+  return line;
 }
 
 function render(st) {
@@ -67,6 +103,58 @@ function render(st) {
     st.state === 'done' ? formatSummary(st.summary) : `Error: ${st.error}`;
 }
 
+// ---------- settings (Groq opt-in) ----------
+
+async function readSettings() {
+  const got = await chrome.storage.local.get(SETTINGS_KEY);
+  return { cloudSummaries: false, groqKey: '', ...(got[SETTINGS_KEY] || {}) };
+}
+
+async function saveSettings(patch) {
+  const cur = await readSettings();
+  await chrome.storage.local.set({ [SETTINGS_KEY]: { ...cur, ...patch } });
+}
+
+function showKeyState(hasKey) {
+  keyEl.value = '';
+  keyEl.placeholder = hasKey ? 'Key saved (paste to replace)' : 'Groq API key';
+}
+
+cloudEl.addEventListener('change', async () => {
+  if (cloudEl.checked) {
+    // Must be the first await so the click's user gesture is still valid.
+    const ok = await chrome.permissions.request({ origins: [GROQ_ORIGIN] });
+    if (!ok) {
+      cloudEl.checked = false;
+      statusEl.textContent = 'Access to api.groq.com was not granted, so cloud naming stays off.';
+      return;
+    }
+  }
+  await saveSettings({ cloudSummaries: cloudEl.checked });
+});
+
+keyEl.addEventListener('change', async () => {
+  const k = keyEl.value.trim();
+  if (!k) return;
+  await saveSettings({ groqKey: k });
+  showKeyState(true);
+});
+
+nameBtn.addEventListener('click', async () => {
+  nameBtn.disabled = true;
+  statusEl.textContent = 'Naming groups...';
+  try {
+    const res = await chrome.runtime.sendMessage({ type: 'SUMMARIZE' });
+    statusEl.textContent = res?.ok ? formatNamed(res.result) : `Error: ${res?.error ?? 'no reply'}`;
+  } catch {
+    statusEl.textContent = 'Naming was interrupted. Try again.';
+  }
+  nameBtn.disabled = false;
+  await refreshGroups();
+});
+
+// ---------- wrap-up + dev ----------
+
 btn.addEventListener('click', async () => {
   // Must be the first await so the click's user gesture is still valid.
   const granted = await chrome.permissions.request({ origins: ['<all_urls>'] });
@@ -84,9 +172,9 @@ btn.addEventListener('click', async () => {
 
 $('clear').addEventListener('click', async () => {
   await clearAll();
-  await chrome.storage.local.remove(STATUS_KEY);
+  await chrome.storage.local.remove(STATUS_KEY); // settings (key, toggle) are kept
   statusEl.textContent = 'Database cleared.';
-  await refreshList();
+  await refreshAll();
 });
 
 // Live updates while the popup is open.
@@ -94,13 +182,16 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes[STATUS_KEY]) {
     const st = changes[STATUS_KEY].newValue;
     render(st);
-    if (st?.state !== 'running') refreshList(); // list only refreshes when finished
+    if (st?.state !== 'running') refreshAll(); // lists only refresh when finished
   }
 });
 
-// On open: show the latest status (running, done, or error).
+// On open: show the latest status (running, done, or error) and saved settings.
 (async () => {
   const got = await chrome.storage.local.get(STATUS_KEY);
   render(got[STATUS_KEY]);
-  await refreshList();
+  const s = await readSettings();
+  cloudEl.checked = s.cloudSummaries;
+  showKeyState(!!s.groqKey);
+  await refreshAll();
 })();

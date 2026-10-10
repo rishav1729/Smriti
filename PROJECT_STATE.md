@@ -6,59 +6,89 @@
 >    in based on what we did).
 > 2. When you start a NEW chat, paste this whole file as your first
 >    message, plus the current content of any files listed under
->    "Files touched this session."
+>    "Files to paste next session."
 > 3. I have zero memory of past chats — this file + the actual code files
 >    are the only continuity between sessions. Treat it as the source of truth.
 
 ---
 
 ## Last updated
-`2026-10-09 — end of session 3`
+`2026-10-10 — end of session 4`
 
 ## Current phase
-Bottom-up build, steps 1–7 done and tested in Chrome (clustering is wired into
-wrap-up, popup shows full results). Next: step 8, `lib/summarizer.js` (Groq
-labels/summaries for groups), then the list/search view in `graph-view/`.
+Bottom-up build, steps 1–8 done and tested in Chrome: pages are extracted,
+embedded, clustered into nodes, and every node now has a label (local always,
+Groq optionally). README written. Next: step 9, the `graph-view/` list/search
+view (the main v1 feature still missing), then the pre-publish checklist.
 
-## What's working right now (all tested in Chrome)
-- `lib/storage.js` (s1): IndexedDB wrapper; page upsert, chunks as
-  `Float32Array`, `deletePage` removes page and chunks.
-- `content/extractor.js` + vendored `lib/readability.js` (s1, **fixed s3**):
-  Readability result is only used if it is >= 200 chars AND >= 30% of the
-  page's `innerText` length; otherwise falls back to `innerText`. Fixes the
-  partial-subtree problem on app-style pages (Claude chat page now ~11.6k chars
-  instead of ~1k).
+## What's working right now (all tested in Chrome unless marked)
+- `lib/storage.js` (s1, **extended s4**): IndexedDB wrapper; page upsert,
+  chunks as `Float32Array`. `deletePage(id)` now also removes the page id from
+  every node in the same transaction, deletes nodes left empty (with their
+  edges), and returns the ids of surviving nodes that lost the page.
+- `content/extractor.js` + vendored `lib/readability.js` (s1, fixed s3):
+  Readability used only if >= 200 chars AND >= 30% of `innerText` length,
+  otherwise falls back to `innerText`.
 - **Embeddings (s2):** `offscreen/offscreen.js` runs transformers.js with the
-  quantized all-MiniLM-L6-v2 from local files (no CDN), in an offscreen
-  document. `lib/embeddings.js` provides `chunkText`, `embedTexts`, `embedPage`,
-  `cosine`, `closeOffscreen`. Vectors are 384-dim, L2-normalized (cosine = dot).
-- **Clustering (s3, NEW):** `lib/clustering.js`. Each page = one vector (mean of
-  its chunk vectors, re-normalized). Step 1 `assign`: page joins the node whose
-  centroid scores best if score >= `THRESHOLD` (0.50), else starts a new node.
-  Step 2 `mergeNodes`: repeatedly merge the closest pair of nodes while their
-  centroid score >= `MERGE_THRESHOLD` (0.52) (fixes centroid dilution).
-  Exports: `THRESHOLD`, `MERGE_THRESHOLD`, `clusterNewPages`, `reclusterAll`,
-  `showClusters`, `showMergeCandidates` (last two are dev helpers).
-- **Wrap-up (s2, extended s3):** extract -> save page -> chunk+embed ->
-  `saveChunks` -> after the tab loop, `clusterNewPages()`. Skips thin pages
-  (< 300 chars), asleep/loading tabs, and unchanged pages that already have
-  chunks. Offscreen doc closed in `finally`. A clustering error is caught
-  separately (`summary.clusterError`) and never loses the wrap-up result; pages
-  are grouped on the next run.
-- **Status via storage (s3, NEW):** the service worker writes progress and the
-  final summary to `chrome.storage.local` key `wrapUpStatus`
-  (`state: running | done | error`). The popup no longer waits for the message
-  response, so closing/reopening it (Chrome closes popups on focus loss) still
-  shows progress or the last result. A `running` flag blocks a second wrap-up.
-- `popup/` (s3 updated): live progress ("Working: embedding (tab 5 of 14)"),
-  full summary (saved, embedded, unchanged, skipped, thin, asleep, groups,
-  merged, problems), "Clear all (dev)" also clears the status key. A `running`
-  status not updated for 3 minutes is shown as "interrupted".
+  quantized all-MiniLM-L6-v2 from local files, in an offscreen document.
+  `lib/embeddings.js`: `chunkText`, `embedTexts`, `embedPage`, `cosine`,
+  `closeOffscreen`. 384-dim, L2-normalized (cosine = dot).
+- **Clustering (s3, extended s4):** `lib/clustering.js`. Page = mean of chunk
+  vectors; `assign` at `THRESHOLD` 0.50, then `mergeNodes` at `MERGE_THRESHOLD`
+  0.52. New in s4: `removePage(pageId)`, `pruneNodes()`, `rankPages(node)`;
+  `clusterNewPages()` now calls `pruneNodes()` first.
+- **Summarizer (s4, NEW):** `lib/summarizer.js`. Local label always (title of
+  the node's most central page). Optional Groq naming for groups of 2+ pages
+  only, model `openai/gpt-oss-20b`, batches of 5 groups, sends titles + first
+  150 chars of up to 4 pages (links/emails/6+ digit numbers scrubbed, groups
+  sent as 1..n). Only nodes whose page set changed (or multi-page nodes still
+  carrying a local label after cloud was turned on) are (re)named. Runs as the
+  last wrap-up stage ("naming") in its own try/catch, and on demand via the
+  `SUMMARIZE` message ("Name groups now" button).
+- **Wrap-up (s2, extended s3/s4):** extract -> save page -> chunk+embed ->
+  `saveChunks` -> `clusterNewPages()` -> `summarizeNodes()`. Skips thin pages
+  (< 300 chars), asleep/loading tabs, unchanged pages with chunks. Offscreen doc
+  closed in `finally`. Clustering and naming errors are caught separately
+  (`summary.clusterError`, `summary.nameError`).
+- **Status via storage (s3):** progress/result in `chrome.storage.local` key
+  `wrapUpStatus`; popup never waits on the reply. `running` flag blocks a
+  second wrap-up (also blocks `SUMMARIZE`).
+- `popup/` (s4 updated): wrap-up button + live status; **Groups list** (label,
+  page count, ", Groq" tag, hover = summary); **Group names** section (Groq
+  toggle, key field, privacy text, "Name groups now"); saved-pages list;
+  "Clear all (dev)" (keeps settings).
+- **Manifest (s4 CHANGED):** `https://api.groq.com/*` added to
+  `optional_host_permissions` (requested at runtime when the toggle is ticked);
+  description rewritten ("Groups your open tabs by topic, on your device.
+  Optional AI naming sends only short, anonymized snippets.").
+- **README.md (s4, NEW)** written and ready to commit (privacy section, tech
+  highlights, setup, roadmap, credits).
 - Build tooling (s2): `npm run build`, `npm run download-model`; Node on D:,
   npm cache on `D:\npm-cache`.
-- Manifest: unchanged in s3 (no need to replace the knowledge-base copy).
 - GitHub repo: https://github.com/rishav1729/Smriti (reference only; Claude
   cannot read its file contents).
+
+## Test results this session (s4)
+- `pruneNodes()` → `{updated: 0, removed: 0}` (no stale ids existed).
+- `removePage(id)` on a singleton page → `{nodesUpdated: 0}`, group list fine
+  (this exercised the "node deleted because empty" path).
+- **NOT YET VERIFIED:** `removePage` on a page from a multi-page group (the
+  path that recomputes the surviving node's centroid). Test snippet for the
+  service worker console:
+  ```js
+  const n = (await storage.getAllNodes()).find(n => n.pageIds.length > 1)
+  const before = n.pageIds.length
+  const r = await clustering.removePage(n.pageIds[n.pageIds.length - 1])
+  const after = await storage.getNode(n.id)
+  console.log(r, before, after.pageIds.length, after.centroidEmbedding.length)
+  // pass = {nodesUpdated: 1}, N, N-1, 384  (deletes one page permanently)
+  ```
+- Groq naming end to end: **"Named 0 groups locally, 3 with Groq."** on 13
+  groups / 25 saved pages. Groups named: "Indian exam prep" (10 pages),
+  "Vertex AI Agent Builder" (3), "Claude AI usage" (2). The 10 singleton groups
+  keep their page title as label (by design). Model `llama-3.1-8b-instant` was
+  not in the user's Groq dashboard model list; switched to `openai/gpt-oss-20b`
+  (list showed gpt-oss-120b, gpt-oss-20b, qwen/qwen3.8-27b).
 
 ## Measured results (s3) — the data behind the thresholds
 - 35-page then 46-page sample of real browsing (exam prep, Kore.ai/LangChain,
@@ -74,107 +104,167 @@ labels/summaries for groups), then the list/search view in `graph-view/`.
   | 0.55 | 34 | 28 | none |
   | 0.50 | 30 | 24 | none  <- chosen |
   | 0.45 | 24 | 18 | yes (Pressure Washer + DataDriven in exam group; weak Data Science x Solidity pair) |
-- **Merge threshold:** group-to-group scores of pairs that should merge were
-  0.553–0.602; the next pair down was 0.493 (article 258 search page), then
-  unrelated pairs <= 0.487. Clear gap -> `MERGE_THRESHOLD = 0.52`.
+- **Merge threshold:** group pairs that should merge scored 0.553–0.602; the
+  next pair down was 0.493, then unrelated pairs <= 0.487. -> 0.52.
 - Result at 0.50 / 0.52 on 46 pages: exam-prep group of 14, Kore.ai/LangChain/AI
   group of 6, two web3 pairs, 22 singletons, no wrong merges.
-- After Clear all + re-run on 14 open tabs: 9 groups (exam prep x5, Vertex AI
-  Agent Builder x2, 7 alone).
 - Decision on model size: no bigger model needed. Remaining misses come from
   short/low-text pages, not model quality.
 
 ## What's broken / known issues
-- **Changed pages are not re-grouped.** If a page's content changes and it is
-  re-embedded, it stays in its old node. `reclusterAll()` fixes it manually.
-- **Deleted pages stay in node `pageIds`** (stale ids). Must be handled before
-  the search view relies on nodes (`deletePage` should also remove the id from
-  nodes, and delete empty nodes).
+- **Changed pages are not re-grouped.** A re-embedded page stays in its old
+  node (and its node's summaryKey does not change, so the label is not
+  refreshed). `reclusterAll()` fixes it manually. Note: `reclusterAll()` also
+  throws away all labels; run "Name groups now" afterwards (cloud labels are
+  re-requested, using Groq quota).
+- **Nothing in the UI calls `removePage` yet.** The cleanup exists and is wired
+  into storage, but there is no delete button; do it before/with the search
+  view if users should be able to remove pages.
+- **Singleton labels are raw page titles**, some noisy ("command line - What is
+  the equivalent fo…", bare "YouTube"). The search view must cope (show URL/site
+  name next to it).
 - **Web3 pages split** (Cyfrin/Shieldify pair, Web3 certification pair, and
   Cyfrin Login / remix / Solidity cheat sheet alone). Short pages have little
-  text. Idea: prepend the page title to the text that gets embedded (test it).
-- On small sets (14 pages) some related pages stay alone (Agents for Impact,
-  Google Skills vs the Vertex AI group). More pages may fix it; title-in-
-  embedding is the next experiment.
-- Kore.ai release notes: 88k chars, capped at 60 chunks, so ~80% of the page is
-  never embedded.
-- Google Search pages and tiny pages (Speedtest, Groq console, Inshorts, "Thank
-  you" pages) add noise; blocklist or higher minimum still undecided. YouTube
-  feed/home pages same issue.
-- Titles: IIT Kanpur page has title `""`; the display helpers fall back to the
-  URL. Readability strips site-name suffixes.
-- `readabilityChars` / `bodyChars` diagnostics are returned by the extractor but
-  the service worker does not save them.
-- A transient "Receiving end does not exist" embed error happened once (model
+  text. DEFERRED experiment: title-in-embedding (see "Deferred").
+- On small sets (14 pages) some related pages stay alone. More pages may fix it.
+- Kore.ai release notes: 88k chars, capped at 60 chunks, ~80% never embedded.
+- Google Search pages, tiny pages (Speedtest, Groq console, Inshorts, "Thank
+  you" pages) and YouTube feed/home pages add noise; blocklist or higher
+  minimum undecided.
+- Titles: IIT Kanpur page has title `""`; display helpers (and the summarizer)
+  fall back to the URL hostname. Readability strips site-name suffixes.
+- `readabilityChars` / `bodyChars` diagnostics are returned by the extractor
+  but not saved.
+- Transient "Receiving end does not exist" embed error happened once (model
   still starting up); the page is retried at the next wrap-up.
 - If the service worker is killed mid-run, `wrapUpStatus` stays `running`; the
   popup treats it as interrupted after 3 minutes.
-- Popup status needs `white-space: pre-wrap;` on `#status` in `popup.css` if the
-  text shows as one line.
-- One run said "Saved 8" but listed 7 pages (probably duplicate URLs upserting
-  into one record; unconfirmed, low priority).
-- Dev hooks `globalThis.storage`, `.embeddings`, `.clustering` are still in the
-  service worker. Remove before publishing.
+- One run said "Saved 8" but listed 7 pages (probably duplicate URLs; low
+  priority).
+- Groq model names change over time; if naming returns "Groq request failed
+  (400/404)", check the model list in the Groq console and edit `GROQ_MODEL`
+  in `lib/summarizer.js`.
+- Groq free-tier 429s: naming stops for that run, local labels stay, next run
+  retries.
 - Generated files are gitignored, so a fresh clone needs `npm install`,
   `npm run download-model`, `npm run build`.
 
+## PRE-PUBLISH CHECKLIST (do NOT forget before making the repo public / publishing)
+1. Remove the four dev hooks in `background/service-worker.js`
+   (`globalThis.embeddings/.storage/.clustering/.summarizer` and the
+   `// DEV ONLY` comment).
+2. Remove the "Clear all (dev)" button from `popup/popup.html` and its handler
+   in `popup/popup.js` (or move it behind a confirm in a settings area).
+3. README: add one line that the Groq key is stored unencrypted in
+   `chrome.storage.local` on the user's device (revocable in the Groq console).
+4. README: pick and add a license (currently "License to be decided"), and add
+   a screenshot/GIF at the commented spot near the top.
+5. Test the README setup steps from a fresh clone
+   (`npm install`, `npm run download-model`, `npm run build`, load unpacked).
+6. Re-check manifest description length (<= 132 chars) and replace placeholder
+   icons.
+7. Re-read the privacy claims in README, manifest and popup against what the
+   code actually sends (only titles + 150-char scrubbed excerpts of up to 4
+   pages per multi-page group, only when the toggle is on).
+
 ## Files touched this session
-- New: `lib/clustering.js`
-- Edited: `content/extractor.js` (Readability gating), `background/service-worker.js`
-  (clustering step, status in `chrome.storage.local`, running guard),
-  `popup/popup.js` (live status, full summary)
+- New: `lib/summarizer.js`, `README.md`
+- Edited: `lib/storage.js` (deletePage cleans nodes), `lib/clustering.js`
+  (removePage, pruneNodes, rankPages, refreshCentroid helper, prune in
+  clusterNewPages), `background/service-worker.js` (naming stage, SUMMARIZE
+  message, summarizer dev hook), `popup/popup.html`, `popup/popup.css`,
+  `popup/popup.js` (groups list, Groq settings, Name groups now),
+  `manifest.json` (Groq optional host permission, new description)
 - Docs: `ARCHITECTURE.md`, `PROJECT_STATE.md`
-- Not touched: `lib/storage.js`, `lib/embeddings.js`, `offscreen/*`,
-  `manifest.json`, `popup/popup.html`, `popup/popup.css`
+- Not touched: `lib/embeddings.js`, `offscreen/*`, `content/extractor.js`,
+  `lib/readability.js`
 
 ## Decisions made this session
-- Page-level matching (mean of chunk vectors), not chunk-level.
-- Greedy incremental assignment to node centroids, `THRESHOLD = 0.50`.
-- Second merge pass for centroid dilution, `MERGE_THRESHOLD = 0.52`; both
-  chosen from measured score distributions on real pages (decision 12 done).
-- Readability is gated against an `innerText` baseline (30% ratio), not
-  per-site rules.
-- Wrap-up progress/result lives in `chrome.storage.local`; the popup never
-  waits on the message response.
-- Clustering failure must not lose the wrap-up result.
-- Keep MiniLM; do not move to a bigger embedding model.
+- Page-level cleanup is atomic in storage (membership removal, empty-node
+  deletion); vector math (centroid refresh) stays in clustering, so storage
+  keeps no ML logic.
+- `clusterNewPages()` prunes stale ids first (self-healing).
+- Local label is always produced; Groq naming is strictly opt-in, default off.
+- Only groups of 2+ pages are ever sent to Groq; singletons keep their title.
+- What leaves the machine: titles (100 chars) + 150-char excerpts of up to 4
+  pages per group, scrubbed (links, emails, 6+ digit numbers), groups numbered
+  1..n; no URLs, no full text, no database ids.
+- Re-naming is driven by `node.summaryKey` (sorted pageIds) and
+  `node.labelSource` ('local' | 'cloud').
+- Page text is untrusted model input: output is validated/trimmed and shown
+  only via `textContent`.
+- Groq key stored in `chrome.storage.local` (plaintext, extension-only);
+  documented in README.
+- Model: `openai/gpt-oss-20b` (a constant, easy to change).
+- Title-in-embedding experiment DEFERRED to the next version (see below).
 
-## Next immediate step
-1. Optional quick experiment: prepend the page title to the text passed to
-   `embedPage` (for short pages) and re-run `reclusterAll()`; keep it only if
-   groups improve (web3 and the small-set singletons).
-2. Fix the stale-node problem: when a page is deleted, remove its id from nodes
-   and delete empty nodes (touches `lib/storage.js` and/or `clustering.js`).
-3. Build `lib/summarizer.js`: label + summary per node (Groq free tier,
-   batched, only at wrap-up, optional; anonymized short prompts only) and show
-   the label in the groups. Paste `lib/storage.js` and `service-worker.js` when
-   starting.
-4. Then `graph-view/` list/search view over nodes.
-Paste only the files about to be edited.
+## Deferred (do not lose)
+- **Title-in-embedding experiment** (decided s4: leave for the next version).
+  Idea: prepend the page title to the text passed to `embedPage` to help short
+  pages (web3 split, small-set singletons). How to test: change the embedded
+  text, run `reclusterAll()` + `showClusters()`, keep only if groups improve
+  without wrong merges. Needs `lib/embeddings.js` and `service-worker.js`.
+
+## Next immediate step (session 5)
+1. **Build `graph-view/` (graph.html / graph.js / graph.css): list/search view
+   over nodes.** Opens as a tab (`chrome.tabs.create({ url:
+   chrome.runtime.getURL('graph-view/graph.html') })`) from a button in the
+   popup. Minimum: group list with labels, page counts, expandable page lists
+   (title, site, link), and a search box.
+2. **Semantic search design to settle first:** the query must be embedded with
+   MiniLM, which only runs in the offscreen document. Plan: the search page
+   sends a message to the service worker (e.g. `SEARCH`/`EMBED_QUERY`), which
+   embeds via `embeddings.embedTexts([query])`, ranks, and replies; close the
+   offscreen doc afterwards. Expect a few seconds of model start-up on the first
+   search. Decide: rank by page vector (consistent with clustering) vs best
+   chunk (better snippets, but chunk-level gave false matches in clustering);
+   suggested: rank pages by page vector, then show the best-matching chunk as
+   the snippet; also a plain keyword match on titles as a fast fallback.
+3. Optional small additions with it: a delete-page button wired to
+   `clustering.removePage`, and showing site name/URL next to noisy singleton
+   labels.
+4. Then: verify the untested `removePage` multi-page path (snippet above),
+   work through the PRE-PUBLISH CHECKLIST, commit.
+5. Later (v2): title-in-embedding, blocklist, re-grouping changed pages, long
+   page cap, stretch goals in ARCHITECTURE.md.
+
+## Files to paste next session
+Paste only the files about to be edited. For step 1–3 above:
+`background/service-worker.js`, `lib/embeddings.js`, `lib/storage.js`,
+`lib/clustering.js` (for ranking helpers), `popup/popup.html` and
+`popup/popup.js` (for the "open search" button). Do NOT paste
+`lib/summarizer.js` unless changing it.
 
 ## Open questions / blockers
 - Blocklist for low-value sites (Google Search, YouTube feed, tiny pages)?
-- What goes to Groq exactly (titles + short excerpts only? how anonymized?).
-- Whether re-embedded/changed pages should be re-assigned automatically.
-- README credits still to add: transformers.js (Apache-2.0), onnxruntime-web
-  (MIT), all-MiniLM-L6-v2 (Apache-2.0), Readability (Apache-2.0).
+- Should changed/re-embedded pages be re-assigned automatically (and their
+  node relabeled)?
+- Search ranking: page-level vs chunk-level snippets (see above).
+- Which license for the repo.
+- README credits are done (transformers.js, onnxruntime-web, all-MiniLM-L6-v2,
+  Readability).
 - Interview-worthy so far: on-demand injection with runtime-granted host
   permissions (privacy design), transactional chunk replacement in storage,
   Readability on a cloned DOM with fallback; s2: on-device WASM embeddings under
   MV3 lifecycle limits (offscreen doc, creation lock, ready-retry), locally
   bundled model with CDN WASM path overridden, normalized vectors so similarity
-  is a dot product, idempotent wrap-up; **s3:** gating Readability against an
-  independent `innerText` baseline (found in real data), choosing page-level
-  matching and two thresholds from measured score distributions, merge pass for
-  centroid dilution, and moving wrap-up status into `chrome.storage.local`
-  because MV3 popups die on focus loss. Routine: popup UI, icons, IndexedDB
-  CRUD, the chunker, npm scripts, manifest edits.
+  is a dot product, idempotent wrap-up; s3: gating Readability against an
+  independent `innerText` baseline, choosing page-level matching and two
+  thresholds from measured score distributions, merge pass for centroid
+  dilution, wrap-up status in `chrome.storage.local` because MV3 popups die on
+  focus loss; **s4:** privacy-minimizing optional cloud step (local-first
+  fallback, data minimization, scrubbing, anonymized group ids, runtime-granted
+  permission), treating page text as untrusted input to an LLM (validated
+  output, textContent only), change-detection keys so re-naming costs nothing,
+  atomic node cleanup in storage with vector math kept in clustering. Routine:
+  popup UI, settings form, batching loop, icons, IndexedDB CRUD, the chunker,
+  npm scripts, manifest edits.
 
 ---
 
 ## Full current file contents
 
 No source files are pasted here. Paste from VS Code only the files we are about
-to edit. Replace the Project knowledge base copies of `ARCHITECTURE.md` and
-`PROJECT_STATE.md` with the updated versions (`manifest.json` did not change
-this session).
+to edit. Replace the Project knowledge base copies of `ARCHITECTURE.md`,
+`PROJECT_STATE.md` **and `manifest.json` (it changed this session)** with the
+updated versions. Commit `README.md` to the repo.
