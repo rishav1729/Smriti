@@ -1,17 +1,23 @@
 // background/service-worker.js
 // Orchestrator. Wrap-up = inject extractor into open tabs -> save pages
-// -> chunk + embed each new/changed page -> save chunks.
-// (Clustering / summarizing get wired in here in later steps.)
+// -> chunk + embed each new/changed page -> save chunks -> cluster new pages.
+// Progress and the final result are written to chrome.storage.local so the
+// popup can show them even if it was closed and reopened mid-run.
 import * as embeddings from '../lib/embeddings.js';
 import * as storage from '../lib/storage.js';
+import * as clustering from '../lib/clustering.js';
 
-// DEV ONLY: dynamic import() is not allowed in service workers, so expose the
-// modules on globalThis to test them from the service worker's DevTools
-// console. Remove before publishing.
+// DEV ONLY: remove before publishing.
 globalThis.embeddings = embeddings;
 globalThis.storage = storage;
+globalThis.clustering = clustering;
 
-const MIN_CONTENT_CHARS = 300; // thin pages (login walls, app shells) aren't worth saving
+const MIN_CONTENT_CHARS = 300;
+const STATUS_KEY = 'wrapUpStatus';
+let running = false;
+
+const setStatus = (s) =>
+  chrome.storage.local.set({ [STATUS_KEY]: { ...s, updatedAt: Date.now() } });
 
 const normalizeUrl = (url) => {
   try {
@@ -33,26 +39,33 @@ async function extractTab(tab) {
 
 async function wrapUpSession() {
   const tabs = await chrome.tabs.query({});
-  const summary = { saved: 0, embedded: 0, unchanged: 0, thin: 0, asleep: 0, skipped: 0, failed: [] };
+  const startedAt = Date.now();
+  const summary = {
+    saved: 0, embedded: 0, unchanged: 0, thin: 0, asleep: 0, skipped: 0,
+    failed: [],
+    clustered: null,
+    clusterError: null,
+  };
 
   try {
-    for (const tab of tabs) {
-      // Only http(s); never touch incognito tabs (privacy).
+    for (let i = 0; i < tabs.length; i++) {
+      const tab = tabs[i];
+      await setStatus({ state: 'running', stage: 'reading', done: i, total: tabs.length, startedAt });
+
       if (!tab.url || !/^https?:/.test(tab.url) || tab.incognito) {
         summary.skipped++;
         continue;
       }
-            // Discarded (Memory Saver) or still-loading tabs have no live page to read.
-            if (tab.discarded || tab.status !== 'complete') {
-              summary.asleep++;
-              summary.failed.push({
-                url: tab.url,
-                error: tab.discarded
-                  ? 'Tab is asleep. Click it to wake it, then run wrap-up again.'
-                  : 'Tab is still loading. Run wrap-up again once it finishes.',
-              });
-              continue;
-            }
+      if (tab.discarded || tab.status !== 'complete') {
+        summary.asleep++;
+        summary.failed.push({
+          url: tab.url,
+          error: tab.discarded
+            ? 'Tab is asleep. Click it to wake it, then run wrap-up again.'
+            : 'Tab is still loading. Run wrap-up again once it finishes.',
+        });
+        continue;
+      }
 
       // 1. Extract + save the page
       let pageId, content, existing;
@@ -76,13 +89,11 @@ async function wrapUpSession() {
           siteName: r.siteName,
           method: r.method,
           truncated: r.truncated,
-          // keep existing chunk links in case savePage replaces the whole record
           ...(existing?.chunkIds && { chunkIds: existing.chunkIds }),
         });
         content = r.content;
         summary.saved++;
       } catch (err) {
-        // e.g. Chrome Web Store, PDF viewer, or a tab we have no access to
         summary.failed.push({
           url: tab.url,
           error: `${String(err?.message || err)} [discarded=${tab.discarded}, status=${tab.status}]`,
@@ -96,26 +107,47 @@ async function wrapUpSession() {
         continue;
       }
       try {
+        await setStatus({ state: 'running', stage: 'embedding', done: i, total: tabs.length, startedAt });
         const chunks = await embeddings.embedPage(content);
         await storage.saveChunks(pageId, chunks);
         summary.embedded++;
       } catch (err) {
-        // Page stays saved without chunks; the next wrap-up retries it.
         summary.failed.push({ url: tab.url, error: `embedding: ${String(err?.message || err)}` });
       }
     }
   } finally {
-    // Free the model's memory; it reloads (a few seconds) on the next wrap-up.
     await embeddings.closeOffscreen();
   }
+
+  // 3. Cluster pages that are not in any group yet.
+  try {
+    await setStatus({ state: 'running', stage: 'grouping', done: tabs.length, total: tabs.length, startedAt });
+    summary.clustered = await clustering.clusterNewPages();
+  } catch (err) {
+    summary.clusterError = String(err?.message || err);
+  }
+
   return summary;
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg?.type === 'WRAP_UP') {
-    wrapUpSession()
-      .then((summary) => sendResponse({ ok: true, summary }))
-      .catch((err) => sendResponse({ ok: false, error: String(err?.message || err) }));
-    return true; // keep the channel open for the async response
+  if (msg?.type !== 'WRAP_UP') return;
+
+  if (running) {
+    sendResponse({ ok: false, error: 'A wrap-up is already running.' });
+    return;
   }
+  running = true;
+  wrapUpSession()
+    .then(async (summary) => {
+      await setStatus({ state: 'done', summary, finishedAt: Date.now() });
+      try { sendResponse({ ok: true, summary }); } catch { /* popup already closed */ }
+    })
+    .catch(async (err) => {
+      const error = String(err?.message || err);
+      await setStatus({ state: 'error', error });
+      try { sendResponse({ ok: false, error }); } catch { /* popup already closed */ }
+    })
+    .finally(() => { running = false; });
+  return true; // keep the channel open for the async response
 });
