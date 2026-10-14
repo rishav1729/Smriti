@@ -1,0 +1,57 @@
+:root {
+    color-scheme: light dark;
+    --bg: #fafafa; --fg: #1d1d1f; --muted: #6b6b70; --line: #e2e2e6;
+    --card: #fff; --accent: #3b5bdb; --danger: #c92a2a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17171a; --fg: #ececf0; --muted: #9a9aa3; --line: #2c2c32;
+      --card: #1f1f24; --accent: #8da2fb; --danger: #ff8787;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header, main { max-width: 820px; margin: 0 auto; padding: 0 16px; }
+  /* Sticky so status messages ("Page removed.", errors) are always visible. */
+  header {
+    position: sticky; top: 0; z-index: 1;
+    padding-top: 16px; padding-bottom: 4px; background: var(--bg);
+  }
+  h1 { margin: 0 0 12px; font-size: 22px; }
+  form { display: flex; gap: 8px; }
+  input[type="search"] {
+    flex: 1; padding: 10px 12px; font: inherit; color: inherit;
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+  }
+  button {
+    font: inherit; color: inherit; background: var(--card); cursor: pointer;
+    border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px;
+  }
+  button:hover { border-color: var(--accent); }
+  #status { color: var(--muted); font-size: 13px; min-height: 1.4em; margin: 8px 0 16px; }
+  
+  ul { list-style: none; margin: 0; padding: 0; }
+  .page { padding: 8px 0; border-top: 1px solid var(--line); }
+  .page:first-child { border-top: 0; }
+  .page-head { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; }
+  .page-head a { color: var(--accent); text-decoration: none; font-weight: 500; overflow-wrap: anywhere; }
+  .page-head a:hover { text-decoration: underline; }
+  .meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .snippet { margin: 4px 0 0; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+  button.del {
+    flex: none; font-size: 12px; padding: 2px 8px; color: var(--muted);
+  }
+  button.del:hover { color: var(--danger); border-color: var(--danger); }
+  
+  .block, details.group {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 14px; margin-bottom: 10px;
+  }
+  .block h3 { margin: 0 0 4px; font-size: 15px; }
+  .block h3 small, summary small { color: var(--muted); font-weight: 400; }
+  summary { cursor: pointer; font-weight: 600; }
+  details[open] > summary { margin-bottom: 6px; }
+  .empty { color: var(--muted); }

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Smriti</title>
+  <link rel="stylesheet" href="graph.css" />
+</head>
+<body>
+  <header>
+    <h1>Smriti</h1>
+    <form id="form" role="search">
+      <input id="q" type="search" placeholder="Search your saved pages..." autocomplete="off" autofocus />
+      <button type="submit">Search</button>
+    </form>
+    <p id="status" aria-live="polite"></p>
+  </header>
+  <main>
+    <section id="results" hidden></section>
+    <section id="groups"></section>
+  </main>
+  <script type="module" src="graph.js"></script>
+</body>
+</html>

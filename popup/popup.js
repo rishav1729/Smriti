@@ -170,6 +170,12 @@ btn.addEventListener('click', async () => {
   }).catch(() => { /* popup closed or worker restarted: status comes from storage */ });
 });
 
+// Opens the full-page search/list view in a tab (no extra permission needed).
+$('open').addEventListener('click', () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL('graph-view/graph.html') });
+  window.close();
+});
+
 $('clear').addEventListener('click', async () => {
   await clearAll();
   await chrome.storage.local.remove(STATUS_KEY); // settings (key, toggle) are kept

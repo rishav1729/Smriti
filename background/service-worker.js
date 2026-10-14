@@ -4,10 +4,15 @@
 // -> name groups (local label, optional Groq).
 // Progress and the final result are written to chrome.storage.local so the
 // popup can show them even if it was closed and reopened mid-run.
+//
+// s5: also serves SEARCH (embed the query, rank pages) and DELETE_PAGE.
+// The offscreen document is shared by wrap-up and search, so it is
+// reference-counted: it is only closed when nobody is using it.
 import * as embeddings from '../lib/embeddings.js';
 import * as storage from '../lib/storage.js';
 import * as clustering from '../lib/clustering.js';
 import * as summarizer from '../lib/summarizer.js';
+import * as search from '../lib/search.js';
 
 // DEV ONLY: remove before publishing.
 globalThis.embeddings = embeddings;
@@ -17,10 +22,50 @@ globalThis.summarizer = summarizer;
 
 const MIN_CONTENT_CHARS = 300;
 const STATUS_KEY = 'wrapUpStatus';
+const SEARCH_IDLE_MS = 20 * 1000; // keep the model warm briefly for follow-up searches
 let running = false;
 
-const setStatus = (s) =>
-  chrome.storage.local.set({ [STATUS_KEY]: { ...s, updatedAt: Date.now() } });
+// ---------- shared offscreen document (wrap-up + search) ----------
+
+let offscreenUsers = 0;
+let idleTimer = null;
+
+// If this worker was killed while an offscreen doc was open, that doc is
+// orphaned. Close it once on startup; every handler waits for this first.
+const startup = embeddings.closeOffscreen();
+
+function acquireOffscreen() {
+  offscreenUsers++;
+  clearTimeout(idleTimer);
+}
+
+async function releaseOffscreen(delayMs) {
+  offscreenUsers = Math.max(0, offscreenUsers - 1);
+  if (offscreenUsers > 0) return; // someone else (wrap-up or another search) still needs it
+  clearTimeout(idleTimer);
+  if (delayMs <= 0) {
+    await embeddings.closeOffscreen();
+    return;
+  }
+  idleTimer = setTimeout(() => {
+    if (offscreenUsers === 0) embeddings.closeOffscreen();
+  }, delayMs);
+}
+
+const setStatus = (s) => {
+  console.log('[smriti]', s.state, s.stage ?? '', `${s.done ?? ''}/${s.total ?? ''}`);
+  return chrome.storage.local.set({ [STATUS_KEY]: { ...s, updatedAt: Date.now() } });
+};
+
+// Never let one stuck step wedge the `running` flag: every step that talks to
+// a tab or runs a long job has a time limit and fails with a readable error.
+const withTimeout = (promise, ms, label) => {
+  let t;
+  const timeout = new Promise((_, reject) => {
+    t = setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
+};
 
 const normalizeUrl = (url) => {
   try {
@@ -33,14 +78,19 @@ const normalizeUrl = (url) => {
 };
 
 async function extractTab(tab) {
-  const [res] = await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    files: ['lib/readability.js', 'content/extractor.js'], // order matters
-  });
+  const [res] = await withTimeout(
+    chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ['lib/readability.js', 'content/extractor.js'], // order matters
+    }),
+    30 * 1000,
+    'Reading the tab'
+  );
   return res?.result ?? null;
 }
 
 async function wrapUpSession() {
+  await startup;
   const tabs = await chrome.tabs.query({});
   const startedAt = Date.now();
   const summary = {
@@ -52,6 +102,7 @@ async function wrapUpSession() {
     nameError: null,
   };
 
+  acquireOffscreen();
   try {
     for (let i = 0; i < tabs.length; i++) {
       const tab = tabs[i];
@@ -121,13 +172,14 @@ async function wrapUpSession() {
       }
     }
   } finally {
-    await embeddings.closeOffscreen();
+    // Closes the model's memory now, unless a search is still using it.
+    await releaseOffscreen(0);
   }
 
   // 3. Cluster pages that are not in any group yet.
   try {
     await setStatus({ state: 'running', stage: 'grouping', done: tabs.length, total: tabs.length, startedAt });
-    summary.clustered = await clustering.clusterNewPages();
+    summary.clustered = await withTimeout(clustering.clusterNewPages(), 60 * 1000, 'Grouping');
   } catch (err) {
     summary.clusterError = String(err?.message || err);
   }
@@ -136,13 +188,15 @@ async function wrapUpSession() {
   // Own try/catch: a naming failure must not lose the wrap-up result.
   try {
     await setStatus({ state: 'running', stage: 'naming', done: tabs.length, total: tabs.length, startedAt });
-    summary.named = await summarizer.summarizeNodes();
+    summary.named = await withTimeout(summarizer.summarizeNodes(), 180 * 1000, 'Naming');
   } catch (err) {
     summary.nameError = String(err?.message || err);
   }
 
   return summary;
 }
+
+const errText = (err) => String(err?.message || err);
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === 'WRAP_UP') {
@@ -157,7 +211,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         try { sendResponse({ ok: true, summary }); } catch { /* popup already closed */ }
       })
       .catch(async (err) => {
-        const error = String(err?.message || err);
+        const error = errText(err);
         await setStatus({ state: 'error', error });
         try { sendResponse({ ok: false, error }); } catch { /* popup already closed */ }
       })
@@ -175,7 +229,47 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     summarizer.summarizeNodes()
       .then((result) => { try { sendResponse({ ok: true, result }); } catch { /* popup closed */ } })
       .catch((err) => {
-        try { sendResponse({ ok: false, error: String(err?.message || err) }); } catch { /* popup closed */ }
+        try { sendResponse({ ok: false, error: errText(err) }); } catch { /* popup closed */ }
+      })
+      .finally(() => { running = false; });
+    return true;
+  }
+
+  // s5: semantic search. Allowed while a wrap-up runs (the offscreen doc is
+  // shared and reference-counted), so a search never gets its model closed
+  // from under it.
+  if (msg?.type === 'SEARCH') {
+    (async () => {
+      await startup;
+      acquireOffscreen();
+      try {
+        const results = await search.searchPages(msg.query);
+        try { sendResponse({ ok: true, results }); } catch { /* page closed */ }
+      } catch (err) {
+        try { sendResponse({ ok: false, error: errText(err) }); } catch { /* page closed */ }
+      } finally {
+        await releaseOffscreen(SEARCH_IDLE_MS);
+      }
+    })();
+    return true;
+  }
+
+  // s5: delete a page everywhere (page, chunks, node membership, centroid).
+  // Shares the `running` guard so it never interleaves with wrap-up writes.
+  if (msg?.type === 'DELETE_PAGE') {
+    if (running) {
+      sendResponse({ ok: false, error: 'A wrap-up is running. Try again when it finishes.' });
+      return;
+    }
+    if (!Number.isInteger(msg.pageId)) {
+      sendResponse({ ok: false, error: 'Invalid page id.' });
+      return;
+    }
+    running = true;
+    clustering.removePage(msg.pageId)
+      .then((result) => { try { sendResponse({ ok: true, result }); } catch { /* page closed */ } })
+      .catch((err) => {
+        try { sendResponse({ ok: false, error: errText(err) }); } catch { /* page closed */ }
       })
       .finally(() => { running = false; });
     return true;
