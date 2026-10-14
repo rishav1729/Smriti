@@ -2,3 +2,4 @@ node_modules/
 offscreen/offscreen.bundle.js
 vendor/
 models/Xenova/
+.cursor/

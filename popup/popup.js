@@ -2,7 +2,7 @@
 // The popup can be closed at any time (Chrome closes it when you click away).
 // So it never waits for the wrap-up result: it shows whatever the service
 // worker last wrote to chrome.storage.local, and updates live while open.
-import { getAllPages, getAllNodes, clearAll } from '../lib/storage.js';
+import { getAllPages, getAllNodes } from '../lib/storage.js';
 import { SETTINGS_KEY, GROQ_ORIGIN } from '../lib/summarizer.js';
 
 const STATUS_KEY = 'wrapUpStatus';
@@ -11,6 +11,7 @@ const STALE_MS = 3 * 60 * 1000; // a "running" status not updated for 3 min = wo
 const $ = (id) => document.getElementById(id);
 const btn = $('wrap');
 const nameBtn = $('name');
+const clearBtn = $('clear');
 const statusEl = $('status');
 const cloudEl = $('cloud');
 const keyEl = $('key');
@@ -153,7 +154,7 @@ nameBtn.addEventListener('click', async () => {
   await refreshGroups();
 });
 
-// ---------- wrap-up + dev ----------
+// ---------- wrap-up ----------
 
 btn.addEventListener('click', async () => {
   // Must be the first await so the click's user gesture is still valid.
@@ -176,10 +177,25 @@ $('open').addEventListener('click', () => {
   window.close();
 });
 
-$('clear').addEventListener('click', async () => {
-  await clearAll();
-  await chrome.storage.local.remove(STATUS_KEY); // settings (key, toggle) are kept
-  statusEl.textContent = 'Database cleared.';
+// ---------- delete all data ----------
+
+clearBtn.addEventListener('click', async () => {
+  if (!confirm(
+    'Delete all saved pages, groups and search data from this device?\n\n' +
+    'This cannot be undone. Your Groq settings are kept.'
+  )) return;
+
+  clearBtn.disabled = true;
+  statusEl.textContent = 'Deleting...';
+  try {
+    // The service worker does the write: it owns the `running` guard, so this
+    // can never interleave with a wrap-up.
+    const res = await chrome.runtime.sendMessage({ type: 'CLEAR_ALL' });
+    statusEl.textContent = res?.ok ? 'All saved data deleted.' : `Error: ${res?.error ?? 'no reply'}`;
+  } catch {
+    statusEl.textContent = 'Deleting was interrupted. Try again.';
+  }
+  clearBtn.disabled = false;
   await refreshAll();
 });
 

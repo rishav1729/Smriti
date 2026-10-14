@@ -8,17 +8,12 @@
 // s5: also serves SEARCH (embed the query, rank pages) and DELETE_PAGE.
 // The offscreen document is shared by wrap-up and search, so it is
 // reference-counted: it is only closed when nobody is using it.
+// s6: also serves CLEAR_ALL ("Delete all my data" in the popup).
 import * as embeddings from '../lib/embeddings.js';
 import * as storage from '../lib/storage.js';
 import * as clustering from '../lib/clustering.js';
 import * as summarizer from '../lib/summarizer.js';
 import * as search from '../lib/search.js';
-
-// DEV ONLY: remove before publishing.
-globalThis.embeddings = embeddings;
-globalThis.storage = storage;
-globalThis.clustering = clustering;
-globalThis.summarizer = summarizer;
 
 const MIN_CONTENT_CHARS = 300;
 const STATUS_KEY = 'wrapUpStatus';
@@ -52,10 +47,8 @@ async function releaseOffscreen(delayMs) {
   }, delayMs);
 }
 
-const setStatus = (s) => {
-  console.log('[smriti]', s.state, s.stage ?? '', `${s.done ?? ''}/${s.total ?? ''}`);
-  return chrome.storage.local.set({ [STATUS_KEY]: { ...s, updatedAt: Date.now() } });
-};
+const setStatus = (s) =>
+  chrome.storage.local.set({ [STATUS_KEY]: { ...s, updatedAt: Date.now() } });
 
 // Never let one stuck step wedge the `running` flag: every step that talks to
 // a tab or runs a long job has a time limit and fails with a readable error.
@@ -270,6 +263,27 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       .then((result) => { try { sendResponse({ ok: true, result }); } catch { /* page closed */ } })
       .catch((err) => {
         try { sendResponse({ ok: false, error: errText(err) }); } catch { /* page closed */ }
+      })
+      .finally(() => { running = false; });
+    return true;
+  }
+
+  // s6: "Delete all my data". Wipes pages, chunks, nodes and edges plus the
+  // wrap-up status. Settings (Groq toggle and key) are kept. Same `running`
+  // guard as DELETE_PAGE, so it never interleaves with a wrap-up.
+  if (msg?.type === 'CLEAR_ALL') {
+    if (running) {
+      sendResponse({ ok: false, error: 'A wrap-up is running. Try again when it finishes.' });
+      return;
+    }
+    running = true;
+    (async () => {
+      await storage.clearAll();
+      await chrome.storage.local.remove(STATUS_KEY);
+    })()
+      .then(() => { try { sendResponse({ ok: true }); } catch { /* popup closed */ } })
+      .catch((err) => {
+        try { sendResponse({ ok: false, error: errText(err) }); } catch { /* popup closed */ }
       })
       .finally(() => { running = false; });
     return true;
