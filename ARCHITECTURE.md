@@ -3,6 +3,9 @@
 This doc is the map of the whole project. Keep it updated as we build —
 it's what lets us resume work in a fresh chat without re-explaining everything.
 
+**Status: v1 closed (s8). There is no v1.1; further work is the v2 backlog at
+the end of this file.**
+
 ## Folder structure
 
 ```
@@ -16,9 +19,12 @@ Smriti/                           # <project>/ (git repo, public)
 ├── .gitignore                    # node_modules/, vendor/, models/Xenova/,
 │                                  # offscreen/offscreen.bundle.js, .cursor/ [s2, s6]
 ├── LICENSE                       # MIT, Copyright (c) 2026 Rishav
-├── README.md                     # Public GitHub README                   [s4, rewritten s6]
+├── README.md                     # Public GitHub README         [s4, rewritten s6, updated s8]
 ├── ARCHITECTURE.md               # This file — system design reference
 ├── PROJECT_STATE.md              # Session handoff doc — update every session
+│
+├── docs/                         # README screenshots (s8): popup.png,
+│                                  # search.png, search-query.png
 │
 ├── background/
 │   └── service-worker.js         # Orchestrator: routes messages. Wrap-up:
@@ -31,7 +37,7 @@ Smriti/                           # <project>/ (git repo, public)
 │                                  # counts the shared offscreen doc; step
 │                                  # timeouts; low-value page rules (s7).
 │                                  # No dev hooks, no console log (s6).
-│                                  # [working, tested s7]
+│                                  # [working, tested s7; unchanged s8]
 │
 ├── content/
 │   └── extractor.js              # Injected ON DEMAND (never auto-run).
@@ -48,17 +54,21 @@ Smriti/                           # <project>/ (git repo, public)
 ├── popup/
 │   ├── popup.html                # Toolbar popup UI: wrap-up, "Search & browse"
 │   │                              # (s5), Groups list, Group names (Groq
-│   │                              # opt-in), saved pages, "Your data" (s6)
+│   │                              # opt-in, "Remove saved Groq key" s8), saved
+│   │                              # pages, "Your data" (s6)
 │   ├── popup.js                  # Live progress/last result from
 │   │                              # chrome.storage.local, groups list, Groq
 │   │                              # settings, "Name groups now", opens the
-│   │                              # search view, "Delete all my data" (s6)
+│   │                              # search view, "Delete all my data" (s6),
+│   │                              # droppedSearch line + remove-key (s8)
 │   └── popup.css                 # s6: `.dev` selector renamed `.danger`
 │
 ├── graph-view/                   # Full-page search/list view (opens as a tab) [s5, working]
 │   ├── graph.html                # Search box, status line, results + groups areas
-│   ├── graph.js                  # Keyword + semantic search, group list, delete
-│   └── graph.css                 # Sticky header, light/dark via prefers-color-scheme
+│   ├── graph.js                  # Keyword + semantic search, group list, delete;
+│   │                              # s8: URL path under each row, www host fix
+│   └── graph.css                 # Sticky header, light/dark via prefers-color-scheme;
+│                                  # s8: `.path` style
 │
 ├── lib/
 │   ├── embeddings.js             # Service-worker-side API: chunkText,
@@ -175,6 +185,9 @@ running wrap-up (the popup keeps saying "Working" for up to 3 minutes).
 
 [Popup "Name groups now"] ─ SUMMARIZE ─▶ summarizer.summarizeNodes (no tab reading)
 [Popup "Search & browse"] ─ chrome.tabs.create(graph-view/graph.html)
+[Popup "Remove saved Groq key"] ─ confirm() ─ writes settings in chrome.storage.local
+                                  directly (groqKey='', cloudSummaries=false); no
+                                  worker call, no network               (s8)
 [Popup "Delete all my data"] ─ confirm() ─ CLEAR_ALL ─▶ refused if `running`; else
                                   running=true; storage.clearAll() (pages, chunks,
                                   nodes, edges); remove wrapUpStatus; Groq settings
@@ -203,7 +216,7 @@ running wrap-up (the popup keeps saying "Working" for up to 3 minutes).
 
 All vectors are stored as **Float32Array** (IndexedDB stores typed arrays
 natively). storage.js converts plain arrays automatically on write.
-(No schema/version change in s4–s7: the new node fields are schemaless.)
+(No schema/version change in s4–s8: the new node fields are schemaless.)
 
 **Object store: `pages`** — keyPath `id` (autoIncrement)
 - `id`
@@ -246,7 +259,8 @@ natively). storage.js converts plain arrays automatically on write.
   (`stage` = reading | embedding | grouping | naming)
 - `settings` (s4) = `{ cloudSummaries: boolean, groqKey: string }`. The key is
   stored **unencrypted** (readable only by the extension). "Delete all my data"
-  does not remove it (s6, by design; there is no "remove key" button yet).
+  does not remove it (s6, by design). Since s8 the popup's "Remove saved Groq
+  key" button sets `groqKey: ''` and `cloudSummaries: false`.
 
 ## Interfaces (exported function signatures / contracts of finished modules)
 
@@ -448,7 +462,7 @@ summary = { saved, embedded, unchanged, thin, asleep, skipped,
             failed: [{url, error}],
             clustered: { newPages, nodes, merged } | null,
             clusterError: string | null,
-            droppedSearch: number,            // s7
+            droppedSearch: number,            // s7; shown in the popup since s8
             named: { local, cloud, note } | null,
             nameError: string | null }
 ```
@@ -509,18 +523,23 @@ Does not await the wrap-up reply. On open it reads `wrapUpStatus` and
 Groups list (label, page count, ", Groq" tag when `labelSource === 'cloud'`,
 hover = summary) and the saved-pages list; listens to `chrome.storage.onChanged`
 for live updates and refreshes lists when not running. A `running` status older
-than 3 minutes is treated as interrupted. Groq toggle: ticking it calls
-`chrome.permissions.request` for `GROQ_ORIGIN` as the first await (user gesture)
-and only then saves `cloudSummaries`. The key field saves on `change`, then
-clears and shows "Key saved (paste to replace)". "Name groups now" sends
-`SUMMARIZE`. "Search & browse" (s5) calls `chrome.tabs.create` with the
-extension's `graph-view/graph.html` URL and closes the popup. "Delete all my
-data" (s6) shows a `confirm()` (says Groq settings are kept), sends `CLEAR_ALL`,
-shows "All saved data deleted." or the worker's error, then refreshes the lists.
-All labels/titles are set with `textContent`. (The summary line does not show
-`droppedSearch` yet.)
+than 3 minutes is treated as interrupted. `formatSummary` (s8) adds
+"Dropped N search-result page(s) (not related to other pages)." when
+`droppedSearch` is a positive number (older stored summaries without the field
+show nothing). Groq toggle: ticking it calls `chrome.permissions.request` for
+`GROQ_ORIGIN` as the first await (user gesture) and only then saves
+`cloudSummaries`. The key field saves on `change`, then clears and shows "Key
+saved (paste to replace)". **"Remove saved Groq key" (s8, `#removekey`):** if no
+key is saved it says "No Groq key is saved."; otherwise `confirm()`, then
+`saveSettings({ groqKey: '', cloudSummaries: false })`, unticks the toggle,
+`showKeyState(false)` and a status line. It does not revoke the `api.groq.com`
+host permission. "Name groups now" sends `SUMMARIZE`. "Search & browse" (s5) calls
+`chrome.tabs.create` with the extension's `graph-view/graph.html` URL and closes
+the popup. "Delete all my data" (s6) shows a `confirm()` (says Groq settings are
+kept), sends `CLEAR_ALL`, shows "All saved data deleted." or the worker's error,
+then refreshes the lists. All labels/titles are set with `textContent`.
 
-### graph-view/graph.js (s5; extension page, ES module)
+### graph-view/graph.js (s5, extended s8; extension page, ES module)
 Imports `getAllPages`, `getAllNodes` from `lib/storage.js` and reads IndexedDB
 directly. Keeps light page objects (`id, url, title, siteName, visitedAt`; no
 full text), the node list, and a `pageId -> node` map.
@@ -535,20 +554,23 @@ full text), the node list, and a `pageId -> node` map.
   hits stay and the status says so.
 - **Rendering:** results are grouped by node when the node has 2+ pages (header
   = node label, "x of y pages", tooltip = summary), otherwise one standalone row
-  per page; blocks ordered by best score. Row = title link (http/https only,
-  `target=_blank`, `rel=noopener noreferrer`), host + siteName (if different) +
-  "NN% match" / "title/URL match", snippet, Delete button. Default view (no
-  query): multi-page nodes as `<details>` (largest first), then one "Other
-  pages" `<details>` with every page not in a multi-page node (newest first).
-  Everything is set with `textContent`, never `innerHTML`.
+  per page; blocks ordered by best score. Row (`pageRow`) = title link
+  (http/https only, `target=_blank`, `rel=noopener noreferrer`), meta line
+  (host, plus siteName if it differs from the host after stripping a leading
+  `www.` (s8), "NN% match" / "title/URL match"), **a one-line muted path (s8,
+  `pathOf(url)` = pathname + search, decoded, empty for `/`; class `.path`,
+  ellipsis on overflow, `title` = full URL)**, snippet, Delete button. Default
+  view (no query): multi-page nodes as `<details>` (largest first), then one
+  "Other pages" `<details>` with every page not in a multi-page node (newest
+  first). Everything is set with `textContent`, never `innerHTML`.
 - **Delete:** `confirm()` -> sends `DELETE_PAGE` -> on success reload data and
   re-render; on refusal `alert()` + status line with the worker's error.
 - **Refresh:** listens to `chrome.storage.onChanged` for `wrapUpStatus.state ===
   'done'` and reloads/re-renders.
 - `graph.css`: sticky header, `color-scheme: light dark` with
-  `prefers-color-scheme` tokens.
+  `prefers-color-scheme` tokens; `.path` (s8) is `--muted`, 12 px, no wrap.
 
-## Manifest notes (s2, changed in s4, unchanged s5–s7)
+## Manifest notes (s2, changed in s4, unchanged s5–s8)
 - `permissions`: storage, unlimitedStorage, scripting, idle, **offscreen**.
 - `content_security_policy.extension_pages`:
   `script-src 'self' 'wasm-unsafe-eval'; object-src 'self'` (required for WASM;
@@ -645,7 +667,7 @@ full text), the node list, and a `pageId -> node` map.
     only with `textContent`.
 25. **Groq key stored in `chrome.storage.local`, unencrypted** (s4), readable
     only by the extension; stated in the README since s6. Chrome has no secure
-    vault for extensions.
+    vault for extensions. Removable from the popup since s8 (decision 44).
 26. **Groq model is a constant** (s4): `openai/gpt-oss-20b`. Edit `GROQ_MODEL`
     in `lib/summarizer.js` if Groq changes its lineup.
 27. **Title-in-embedding experiment** (deferred s4, DONE s7): see decision 42.
@@ -672,7 +694,7 @@ full text), the node list, and a `pageId -> node` map.
     and site name instead of a heading per singleton.
 35. **"Delete all my data" goes through the worker and keeps settings** (s6):
     the popup confirms, then sends `CLEAR_ALL` (refused while `running`). The
-    Groq toggle and key are kept.
+    Groq toggle and key are kept; the key is removed with its own button (s8).
 36. **Debug tooling is removed from the shipped code** (s6): dev hooks and the
     `[smriti]` log are gone; the stored `wrapUpStatus` is the debugging record.
 37. **License: MIT** (s6). Readability stays Apache-2.0 with its header kept.
@@ -684,7 +706,8 @@ full text), the node list, and a `pageId -> node` map.
     open the service worker's DevTools, watch the Network tab through a wrap-up
     with the Groq toggle off (expect nothing external) and on with a 2+ page
     group (expect one POST to `api.groq.com`). Repeat whenever the summarizer or
-    any `fetch` changes.
+    any `fetch` changes. (s8 changes added no `fetch`, so no re-check was
+    needed.)
 40. **Low-value pages are handled in two ways** (s7). (a) YouTube home,
     `/feed/*` and `/results` are skipped by URL before reading: they are never
     useful and skipping touches no content. (b) Search-result pages (Google,
@@ -706,22 +729,23 @@ full text), the node list, and a `pageId -> node` map.
     background, so the frozen-tab theory is unconfirmed. Leading theory: a weak
     connection left heavy single-page apps half-loaded at `status=complete`.
     No code change until it recurs with notes (connection, time in background).
+44. **"Remove saved Groq key" also turns cloud naming off** (s8). Naming cannot
+    work without a key, so clearing both keeps the UI out of an "on, but no key"
+    state. It is a local settings write (no worker call, no network). The
+    `api.groq.com` host permission is left granted: harmless, since the code
+    never calls Groq when the toggle is off.
+45. **Result rows show the URL path, not the host again** (s8). The host is
+    already in the meta line; path + query (hash is stripped at save time)
+    distinguishes same-title, same-host pages. Full URL on hover. A site name
+    equal to the host with `www.` is hidden as redundant.
+46. **README screenshots may show real public-site page titles** (s8). The owner
+    judged them safe: no URLs, accounts or keys appear, and the key field shows
+    only its placeholder. Neutral tabs remain the cleaner choice for future
+    shots.
+47. **v1 is closed; there is no v1.1** (s8). Everything not done goes to the v2
+    backlog below.
 
-## Pending decisions
-
-- Whether to blocklist more low-value pages (tiny pages, other feeds), beyond
-  the s7 rules.
-- Re-assigning changed pages (and relabeling their node).
-- Showing the URL path in result rows (so same-title, same-host pages can be
-  told apart).
-- Inline delete confirmation instead of `confirm()` / `alert()`.
-- A "Remove saved Groq key" button (the key currently survives "Delete all my
-  data").
-- Showing `droppedSearch` in the popup summary.
-- Future: strategy for capturing closed tabs / reading history (v2).
-- (Resolved s7: GitHub-only; title-in-embedding rejected; docs anonymized.)
-
-## Known issues / tuning
+## Known issues / tuning (carried into v2; none blocks v1)
 
 - **Tab read timeouts (parked, s7):** see decision 43.
 - **Unrelated search tabs that stay open** are re-read and re-embedded at every
@@ -729,7 +753,7 @@ full text), the node list, and a `pageId -> node` map.
   related tabs are not open yet is dropped.
 - **Groq free tier is 8000 tokens per minute** (s6): one naming request used
   about 1.2k tokens; many groups could hit a 429. The code stops the remaining
-  batches and keeps local labels. Candidate README limitation line.
+  batches and keeps local labels. Documented in the README limitations (s8).
 - **Changed pages are not re-grouped** (they stay in their old node, and the
   node label is not refreshed since `summaryKey` is unchanged; use
   `reclusterAll()` then "Name groups now").
@@ -737,10 +761,10 @@ full text), the node list, and a `pageId -> node` map.
   may word it differently.
 - **Large mixed group**: a big exam-prep style group can hold off-topic low-text
   pages. Title-in-embedding did not help at 11 pages; untested at 30+.
-- **Result rows show only the host**; same-title pages from one host look like
-  duplicates (small polish).
 - **Singleton labels in the popup Groups list are raw page titles**, sometimes
   noisy. The search view lists singletons under "Other pages".
+- **Titles can carry notification counts** such as YouTube's "(1076) ..."
+  (seen s8). Cosmetic.
 - **Small page sets give noisy groups**: related pages can stay alone.
 - **Very long pages are truncated by the 60-chunk cap** (a long release-notes
   page: ~80% never embedded). Low priority.
@@ -757,21 +781,27 @@ full text), the node list, and a `pageId -> node` map.
 - **Transient embed error** "Receiving end does not exist" can happen while the
   offscreen model starts; the page is retried at the next wrap-up.
 - **"Saved 8" but 7 pages listed** in one wrap-up (not reproduced).
+- **`confirm()` / `alert()` dialogs** are used for delete and remove-key.
+- **"Remove saved Groq key" looks grey, not red** (cosmetic; `.danger` styling
+  not investigated).
 - **Groq model names and free-tier limits can change** (400/404 = check the
   model name; 429 = naming stops for that run, local labels stay).
 - Fixed: deleted pages remaining in node `pageIds` (s4); thin pages and asleep
   tabs (s2); no way to delete a page from the UI, and the unverified multi-page
   `removePage` path (s5); search and wrap-up sharing one offscreen doc (s5); dev
   hooks, debug log, dev-only clear button, placeholder icons, outdated README
-  (s6); YouTube home/feed pages and lone search pages adding noise (s7).
+  (s6); YouTube home/feed pages and lone search pages adding noise (s7); README
+  missing the filter and Groq-limit lines, no screenshots, `droppedSearch` not
+  shown, no way to remove the saved Groq key, same-title rows indistinguishable,
+  redundant `www.` host line (s8).
 
-## PRE-PUBLISH CHECKLIST (status, unchanged since s6)
+## PRE-PUBLISH CHECKLIST
 
 All items done (dev hooks removed, "Delete all my data", log line removed,
 README unencrypted-key line + license + search view, fresh-clone test, manifest
 description <= 132 chars, real icons, privacy claims checked against traffic,
-history scanned for secrets). Only an OPTIONAL README screenshot/GIF remains
-(take it from a clean clone with neutral tabs, not from real browsing).
+history scanned for secrets, README screenshots added in s8). Re-check the README
+privacy section if the summarizer or any `fetch` changes (decision 39).
 
 ## Sync SOP (VS Code ↔ chat ↔ Project knowledge base)
 
@@ -784,10 +814,10 @@ history scanned for secrets). Only an OPTIONAL README screenshot/GIF remains
   each working chunk. Before committing run `git status` first, then
   `git add`, commit, push.
 - **End of session:** Claude produces updated `PROJECT_STATE.md` (and
-  `ARCHITECTURE.md` if design or interfaces changed). Save to repo, COMMIT them
-  (in s6 they were replaced in the knowledge base but never committed), and
-  replace the copies in the Project knowledge base (including `manifest.json`
-  when it changed).
+  `ARCHITECTURE.md` if design or interfaces changed). Save to repo, COMMIT them,
+  and replace the copies in the Project knowledge base (including
+  `manifest.json` when it changed). Check whether the knowledge base already
+  holds the latest copy before asking for a replacement.
 - **Interfaces section** above replaces the need to paste finished modules
   into every chat. Paste a module's source only when it is being edited.
 - What is pasted in chat always overrides the knowledge base if they disagree.
@@ -802,7 +832,7 @@ history scanned for secrets). Only an OPTIONAL README screenshot/GIF remains
 - Keep examples in these docs generic (the repo is public): no real page names
   from personal browsing, no local drive paths.
 
-## MVP feature scope (v1)
+## MVP feature scope (v1) — CLOSED in s8
 
 - [x] Manual "Wrap up session" trigger from popup
 - [x] Content extraction from all open tabs (Readability gating s3)
@@ -810,11 +840,13 @@ history scanned for secrets). Only an OPTIONAL README screenshot/GIF remains
 - [x] Similarity-threshold clustering (page-level, 0.50 + merge 0.52, s3)
 - [x] IndexedDB storage of pages/chunks/nodes
 - [x] Node labels/summaries: local always, Groq opt-in (s4)
-- [x] README for GitHub (s4, rewritten s6)
+- [x] README for GitHub (s4, rewritten s6, updated with screenshots s8)
 - [x] Search view (list-based) with delete (s5)
-- [x] Pre-publish checklist (s6; only the optional screenshot remains)
+- [x] Pre-publish checklist (s6)
 - [x] Delete all my data (s6)
 - [x] Low-value page filter (s7)
+- [x] Polish (s8): URL path in result rows, "Remove saved Groq key", `droppedSearch`
+      in the popup, README lines and screenshots
 
 ## Build order (bottom-up)
 
@@ -828,20 +860,39 @@ history scanned for secrets). Only an OPTIONAL README screenshot/GIF remains
 8. Stale-node cleanup + `lib/summarizer.js` + Groq settings (s4)
 9. `lib/search.js` + `graph-view/` + SEARCH/DELETE_PAGE + refcount + queue (s5)
 10. Pre-publish checklist (s6)
-11. v2 polish: low-value filter (done s7); title-in-embedding (tested, rejected
-    s7); tab read timeouts (parked s7); small polish items ← next (s8)
+11. Low-value filter (s7); title-in-embedding tested and rejected (s7); tab read
+    timeouts parked (s7)
+12. Final polish and README (s8) — **v1 closed**
+13. **v2** ← next (s9): pick from the backlog below
 
-## Stretch goals (v2, only after v1 is solid)
+## v2 BACKLOG (nothing here is required; pick one at a time)
 
-- [x] Title-in-embedding experiment (s7: no benefit at 11 pages, rejected)
-- [~] Tab read timeouts (parked, not reproducible)
-- [ ] Passive "related content" nudge on new page load
+Grouping quality
+- [ ] Re-group changed pages (and relabel their node)
+- [ ] More low-value page rules (other feeds, tiny pages); strip notification
+      counts like "(1076)" from displayed titles and labels
+- [ ] Re-test title-in-embedding on 30+ pages (s7: no benefit at 11)
+- [ ] Long-page chunk cap (60 chunks)
+
+UI and robustness
+- [ ] Inline delete/remove-key confirmation instead of `confirm()` / `alert()`
+- [ ] Nicer labels for singleton groups in the popup
+- [ ] Stale `running` status handling; cancelable timeouts
+- [ ] Style "Remove saved Groq key" as a danger button
+- [~] Tab read timeouts (parked; only if they recur)
+
+Features
+- [ ] Passive "related content" nudge on new page load (lookup only)
 - [ ] Visual node-graph UI
 - [ ] Duplicate/stale tab detection
 - [ ] Actionability triage (read-later / reference / active-task)
 - [ ] Capture tabs closed before wrap-up
 - [ ] Opt-in "wake asleep tabs and retry" button
-- [ ] Re-grouping of changed pages; more low-value rules
-- [ ] URL path in result rows; inline delete confirmation
-- [ ] "Remove saved Groq key" button
+- [ ] Chrome on-device Gemini Nano, opportunistically (decision 2)
 - [ ] Chrome Web Store listing and privacy policy (dropped for now, decision 41)
+
+Done earlier (kept for the record)
+- [x] Title-in-embedding experiment (s7: no benefit at 11 pages, rejected)
+- [x] URL path in result rows (s8)
+- [x] "Remove saved Groq key" button (s8)
+- [x] `droppedSearch` shown in the popup (s8)
