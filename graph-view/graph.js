@@ -40,6 +40,15 @@ function hostOf(url) {
 
 const titleOf = (p) => (p.title && p.title !== '""' ? p.title : '') || hostOf(p.url) || p.url;
 
+// Path + query only (host is already shown in the meta line). Hash is not saved.
+function pathOf(url) {
+  try {
+    const u = new URL(url);
+    const p = u.pathname + u.search;
+    return p === '/' ? '' : decodeURI(p);
+  } catch { return ''; }
+}
+
 function safeHref(url) {
   try {
     const u = new URL(url);
@@ -101,10 +110,17 @@ function pageRow(p, { snippet, sem, keyword } = {}) {
 
   const host = hostOf(p.url);
   const meta = [host];
-  if (p.siteName && p.siteName.toLowerCase() !== host.toLowerCase()) meta.push(p.siteName);
+  const site = (p.siteName || '').replace(/^www\./i, '');
+  if (site && site.toLowerCase() !== host.toLowerCase()) meta.push(site);
   if (sem != null) meta.push(`${Math.round(sem * 100)}% match`);
   if (keyword) meta.push('title/URL match');
   li.append(el('div', meta.filter(Boolean).join(' · '), 'meta'));
+  const path = pathOf(p.url);
+  if (path) {
+    const pe = el('div', path, 'path');
+    pe.title = p.url; // full URL on hover
+    li.append(pe);
+  }
 
   if (snippet) li.append(el('p', `${snippet}...`, 'snippet'));
   return li;

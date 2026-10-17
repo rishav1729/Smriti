@@ -40,6 +40,10 @@
   .page-head a { color: var(--accent); text-decoration: none; font-weight: 500; overflow-wrap: anywhere; }
   .page-head a:hover { text-decoration: underline; }
   .meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .path {
+    color: var(--muted); font-size: 12px; margin-top: 1px; opacity: 0.8;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
   .snippet { margin: 4px 0 0; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
   button.del {
     flex: none; font-size: 12px; padding: 2px 8px; color: var(--muted);
