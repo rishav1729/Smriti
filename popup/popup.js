@@ -12,6 +12,7 @@ const $ = (id) => document.getElementById(id);
 const btn = $('wrap');
 const nameBtn = $('name');
 const clearBtn = $('clear');
+const removeKeyBtn = $('removekey');
 const statusEl = $('status');
 const cloudEl = $('cloud');
 const keyEl = $('key');
@@ -63,6 +64,11 @@ function formatSummary(s) {
   if (s.clustered) {
     lines.push(
       `Groups: ${s.clustered.nodes} total (${s.clustered.newPages} new pages grouped, ${s.clustered.merged} merged).`
+    );
+  }
+  if (s.droppedSearch) {
+    lines.push(
+      `Dropped ${s.droppedSearch} search-result page${s.droppedSearch === 1 ? '' : 's'} (not related to other pages).`
     );
   }
   if (s.clusterError) lines.push(`Grouping failed: ${s.clusterError}`);
@@ -139,6 +145,19 @@ keyEl.addEventListener('change', async () => {
   if (!k) return;
   await saveSettings({ groqKey: k });
   showKeyState(true);
+});
+
+removeKeyBtn.addEventListener('click', async () => {
+  const s = await readSettings();
+  if (!s.groqKey) {
+    statusEl.textContent = 'No Groq key is saved.';
+    return;
+  }
+  if (!confirm('Remove the saved Groq key and turn off cloud naming?')) return;
+  await saveSettings({ groqKey: '', cloudSummaries: false });
+  cloudEl.checked = false;
+  showKeyState(false);
+  statusEl.textContent = 'Groq key removed. Cloud naming is off.';
 });
 
 nameBtn.addEventListener('click', async () => {
