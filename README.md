@@ -6,7 +6,9 @@ A **local-first** Chrome extension that turns your open tabs into a searchable p
 
 **Status: v0.1.0, feature-complete for v1.** Extraction, on-device embeddings, clustering, topic naming, and a search/browse view all work. See the [Roadmap](#roadmap).
 
-<!-- Add a screenshot or GIF of the popup and the search view here -->
+![Popup after a wrap-up](docs/popup.png)
+![Search and browse view](docs/search.png)
+![Semantic search results](docs/search-query.png)
 
 ## Why
 
