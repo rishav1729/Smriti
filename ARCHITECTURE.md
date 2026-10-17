@@ -6,7 +6,7 @@ it's what lets us resume work in a fresh chat without re-explaining everything.
 ## Folder structure
 
 ```
-Smriti/                           # D:\Smriti (git repo)
+Smriti/                           # <project>/ (git repo, public)
 ├── manifest.json                 # Extension config (Manifest V3)   [s2, s4: Groq optional permission]
 ├── package.json                  # npm scripts: build, download-model    [s2]
 ├── build.mjs                     # esbuild bundle of offscreen.js + copy
@@ -14,19 +14,24 @@ Smriti/                           # D:\Smriti (git repo)
 ├── download-model.mjs            # One-time dev download of MiniLM files
 │                                  # into models/ (never runs in extension) [s2]
 ├── .gitignore                    # node_modules/, vendor/, models/Xenova/,
-│                                  # offscreen/offscreen.bundle.js         [s2]
-├── README.md                     # Public GitHub README                   [s4]
+│                                  # offscreen/offscreen.bundle.js, .cursor/ [s2, s6]
+├── LICENSE                       # MIT, Copyright (c) 2026 Rishav
+├── README.md                     # Public GitHub README                   [s4, rewritten s6]
 ├── ARCHITECTURE.md               # This file — system design reference
 ├── PROJECT_STATE.md              # Session handoff doc — update every session
 │
 ├── background/
 │   └── service-worker.js         # Orchestrator: routes messages. Wrap-up:
 │                                  # extract -> save -> chunk+embed -> save
-│                                  # chunks -> cluster new pages -> name groups.
+│                                  # chunks -> cluster new pages -> drop lone
+│                                  # search pages (s7) -> name groups.
 │                                  # Writes progress/result to chrome.storage.local.
 │                                  # Handles WRAP_UP, SUMMARIZE, SEARCH (s5),
-│                                  # DELETE_PAGE (s5). Reference-counts the shared
-│                                  # offscreen doc; step timeouts. [working, tested s5]
+│                                  # DELETE_PAGE (s5), CLEAR_ALL (s6). Reference-
+│                                  # counts the shared offscreen doc; step
+│                                  # timeouts; low-value page rules (s7).
+│                                  # No dev hooks, no console log (s6).
+│                                  # [working, tested s7]
 │
 ├── content/
 │   └── extractor.js              # Injected ON DEMAND (never auto-run).
@@ -43,12 +48,12 @@ Smriti/                           # D:\Smriti (git repo)
 ├── popup/
 │   ├── popup.html                # Toolbar popup UI: wrap-up, "Search & browse"
 │   │                              # (s5), Groups list, Group names (Groq
-│   │                              # opt-in), saved pages
+│   │                              # opt-in), saved pages, "Your data" (s6)
 │   ├── popup.js                  # Live progress/last result from
 │   │                              # chrome.storage.local, groups list, Groq
 │   │                              # settings, "Name groups now", opens the
-│   │                              # search view [working, tested s5]
-│   └── popup.css
+│   │                              # search view, "Delete all my data" (s6)
+│   └── popup.css                 # s6: `.dev` selector renamed `.danger`
 │
 ├── graph-view/                   # Full-page search/list view (opens as a tab) [s5, working]
 │   ├── graph.html                # Search box, status line, results + groups areas
@@ -60,19 +65,19 @@ Smriti/                           # D:\Smriti (git repo)
 │   │                              # embedTexts, embedPage, cosine,
 │   │                              # closeOffscreen. Talks to offscreen/ via
 │   │                              # messages. Does NOT import transformers.js.
-│   │                              # s5: serialized batches + timeout [working, tested s5]
-│   ├── search.js                 # s5 NEW. searchPages(query): embed query, rank
+│   │                              # s5: serialized batches + timeout
+│   ├── search.js                 # s5. searchPages(query): embed query, rank
 │   │                              # pages by page vector, best chunk = snippet
 │   ├── clustering.js             # Page vectors, assign-to-node, merge pass,
 │   │                              # removePage, pruneNodes, rankPages,
-│   │                              # dev helpers                   [working, s4 extended]
+│   │                              # dev helpers
 │   ├── storage.js                # IndexedDB wrapper — all DB reads/writes go
-│   │                              # through here, nowhere else  [working, s4: deletePage cleans nodes]
+│   │                              # through here, nowhere else
 │   ├── summarizer.js             # Node labels: local always, Groq opt-in for
-│   │                              # groups of 2+ pages            [working, tested s4]
+│   │                              # groups of 2+ pages
 │   └── readability.js            # Mozilla Readability (Apache-2.0), vendored
 │                                  # from npm @mozilla/readability. Keep its
-│                                  # license header. Credit in README.     [vendored s1]
+│                                  # license header. Credit in README.
 │
 ├── models/Xenova/all-MiniLM-L6-v2/   # Downloaded by `npm run download-model`
 │   ├── config.json                   # (gitignored). Loaded locally only.
@@ -86,12 +91,12 @@ Smriti/                           # D:\Smriti (git repo)
 │                                  # (.wasm + .mjs)
 │
 └── icons/
-    ├── icon16.png                # Placeholder icons (generated), replace later
-    ├── icon48.png
-    └── icon128.png
+    ├── icon16.png                # s6: real icons (gradient "S" with two graph
+    ├── icon48.png                # nodes; 16 px variant has a heavier stroke and
+    └── icon128.png               # no shadow). Replaced the placeholders.
 ```
 
-### Setup after a fresh clone
+### Setup after a fresh clone (verified from a clean clone in s6)
 ```
 npm install
 npm run download-model     # fetches model files into models/ (dev-time only)
@@ -110,8 +115,9 @@ running wrap-up (the popup keeps saying "Working" for up to 3 minutes).
  1. permissions.request  ─────▶  wrapUpSession()  (guarded by `running`)
  2. sendMessage WRAP_UP              │ status -> chrome.storage.local (wrapUpStatus)
     (popup does NOT wait             │ acquireOffscreen() (refcount, s5)
-     for the reply)                  │ tabs.query -> skip non-http(s), incognito,
-                                     │ asleep/loading tabs
+     for the reply)                  │ tabs.query (ALL windows) -> skip non-http(s),
+                                     │ incognito, YouTube home/feed/results (s7,
+                                     │ isLowValueUrl), asleep/loading tabs
                                      │ executeScript(readability.js + extractor.js)
                                      │   (30 s timeout, s5)
                                      ▼
@@ -121,7 +127,7 @@ running wrap-up (the popup keeps saying "Working" for up to 3 minutes).
                               storage.savePage (upsert by url) ──▶ pages
                                      │
                                      ▼  skip if content unchanged AND chunks exist
-                              embeddings.embedPage
+                              embeddings.embedPage(content)
                                 │ chunkText (~200 words, 30 overlap)
                                 │ embedTexts (batches of 16, ONE AT A TIME via a
                                 │   queue, 120 s timeout per batch, s5)
@@ -143,6 +149,13 @@ running wrap-up (the popup keeps saying "Working" for up to 3 minutes).
                                 │ merge: closest node pair >= 0.52, repeat
                                 │ (own try/catch; failure -> summary.clusterError)
                                      │
+                                     ▼  (s7, same try/catch, 30 s timeout)
+                              dropLoneSearchPages                 ──▶ pages, chunks,
+                                │ saved pages whose URL is a Google/Bing/    nodes
+                                │   DuckDuckGo search; any node containing ONLY
+                                │   such pages -> each removed via
+                                │   clustering.removePage; count -> droppedSearch
+                                     │
                                      ▼
                               summarizer.summarizeNodes           ──▶ nodes (label,
                                 │ (180 s timeout, s5)                   summary,
@@ -162,6 +175,10 @@ running wrap-up (the popup keeps saying "Working" for up to 3 minutes).
 
 [Popup "Name groups now"] ─ SUMMARIZE ─▶ summarizer.summarizeNodes (no tab reading)
 [Popup "Search & browse"] ─ chrome.tabs.create(graph-view/graph.html)
+[Popup "Delete all my data"] ─ confirm() ─ CLEAR_ALL ─▶ refused if `running`; else
+                                  running=true; storage.clearAll() (pages, chunks,
+                                  nodes, edges); remove wrapUpStatus; Groq settings
+                                  in chrome.storage.local are kept        (s6)
 
 [Search view]                     [Service worker]                 [Storage/IndexedDB]
  types (keyword)  ──────────────▶ (no worker call: reads pages/nodes from IndexedDB,
@@ -186,7 +203,7 @@ running wrap-up (the popup keeps saying "Working" for up to 3 minutes).
 
 All vectors are stored as **Float32Array** (IndexedDB stores typed arrays
 natively). storage.js converts plain arrays automatically on write.
-(No schema/version change in s4 or s5: the new node fields are schemaless.)
+(No schema/version change in s4–s7: the new node fields are schemaless.)
 
 **Object store: `pages`** — keyPath `id` (autoIncrement)
 - `id`
@@ -228,8 +245,8 @@ natively). storage.js converts plain arrays automatically on write.
   startedAt?, summary?, error?, updatedAt, finishedAt? }`
   (`stage` = reading | embedding | grouping | naming)
 - `settings` (s4) = `{ cloudSummaries: boolean, groqKey: string }`. The key is
-  stored **unencrypted** (readable only by the extension). "Clear all (dev)"
-  does not remove it.
+  stored **unencrypted** (readable only by the extension). "Delete all my data"
+  does not remove it (s6, by design; there is no "remove key" button yet).
 
 ## Interfaces (exported function signatures / contracts of finished modules)
 
@@ -239,12 +256,12 @@ Later modules are written against these. If a signature changes, update here.
 ```
 savePage(page) → id                     // upsert by url; keeps id stable on re-visit
 getPage(id) / getPageByUrl(url) / getAllPages()
-deletePage(id) → affectedNodeIds[]      // s4 CHANGED. One transaction over pages,
-                                        // chunks, nodes, edges: deletes the page and
-                                        // its chunks, removes the id from every node's
-                                        // pageIds, deletes nodes left empty (+ their
-                                        // edges). Returns ids of surviving nodes that
-                                        // lost the page; their centroids are NOT
+deletePage(id) → affectedNodeIds[]      // One transaction over pages, chunks, nodes,
+                                        // edges: deletes the page and its chunks,
+                                        // removes the id from every node's pageIds,
+                                        // deletes nodes left empty (+ their edges).
+                                        // Returns ids of surviving nodes that lost
+                                        // the page; their centroids are NOT
                                         // recomputed here (storage does no vector
                                         // math). Prefer clustering.removePage.
 saveChunks(pageId, [{text, embedding}]) → chunkIds[]
@@ -257,7 +274,8 @@ getNode(id) / getAllNodes()
 deleteNode(id)                          // also deletes edges touching it
 saveEdge({sourceNodeId, targetNodeId, weight})
 getEdgesForNode(nodeId)                 // edges where node is source or target
-clearAll()                              // dev only
+clearAll()                              // wipes the database stores; used by the
+                                        // worker's CLEAR_ALL (s6)
 ```
 All functions are async and exported as ES module named exports.
 
@@ -276,19 +294,20 @@ embedTexts(texts: string[]) → Float32Array[]
                                         // which the offscreen doc is closed (fresh
                                         // model next call) and the call throws.
 embedPage(content, opts?) → [{text, embedding}]
-                                        // chunkText + embedTexts, ready for saveChunks
-cosine(a, b) → number                   // plain dot product (valid because vectors
-                                        // are normalized)
+                                        // chunkText + embedTexts, ready for saveChunks.
+                                        // s7: only the page body is embedded (a
+                                        // title-prefix variant was tested and
+                                        // rejected, decision 42).
+cosine(a, b) → number                   // plain dot product (vectors are normalized)
 closeOffscreen()                        // frees the model's memory; reloads (a few
                                         // seconds) on next embed. The service worker
-                                        // does not call it directly any more; it goes
-                                        // through acquire/releaseOffscreen (below).
+                                        // goes through acquire/releaseOffscreen.
 ```
 Offscreen creation is guarded: `chrome.runtime.getContexts` check plus a shared
 `creating` promise (no double creation), and `send()` retries up to 10 x 200 ms
 while the offscreen script registers its listener.
 
-### lib/search.js (ES module, used from the service worker) — s5 NEW
+### lib/search.js (ES module, used from the service worker) — s5
 ```
 MIN_SCORE = 0.25                        // pages scoring below this are not returned
 MAX_RESULTS = 25
@@ -319,9 +338,8 @@ reclusterAll(threshold?, mergeThreshold?)
                                         // threshold; run "Name groups now" afterwards.
 removePage(pageId) → { nodesUpdated }   // storage.deletePage + recompute the centroid
                                         // of each surviving node that lost the page.
-                                        // Called by the service worker's DELETE_PAGE
-                                        // (s5). Verified on singleton (s4) and
-                                        // multi-page (s5) paths.
+                                        // Used by DELETE_PAGE (s5) and by
+                                        // dropLoneSearchPages (s7).
 pruneNodes() → { updated, removed }     // Drops page ids that no longer exist from all
                                         // nodes, deletes empty nodes, refreshes
                                         // centroids. Idempotent.
@@ -331,6 +349,8 @@ showClusters()                          // dev: console tables of groups + singl
 showMergeCandidates(top=15)             // dev: closest node pairs (run
                                         // reclusterAll(0.50, 1) first: 1 = no merging)
 ```
+The dev helpers are only reachable from a console if the modules are exposed on
+`globalThis` again (hooks removed in s6; re-add temporarily, do not commit).
 Page vector = normalized mean of the page's chunk vectors (computed on the fly
 from `chunks`, not stored). Node centroid = normalized mean of its page vectors,
 recomputed after each join/merge/removal. Not handled yet: re-grouping changed
@@ -353,7 +373,8 @@ Behavior:
   `''`; `labelSource='local'`; `summaryKey` set).
 - Cloud runs only if `settings.cloudSummaries` AND a key is saved AND
   `chrome.permissions.contains(GROQ_ORIGIN)`. Candidates: multi-page nodes that
-  are stale or still `labelSource !== 'cloud'`. Singletons never go to Groq.
+  are stale or still `labelSource !== 'cloud'`. Singletons never go to Groq
+  (so a library of only singletons makes no request at all; confirmed s6).
 - Per group sent: up to 4 most central pages, `{title (<=100 chars), excerpt
   (first 150 chars of content)}`, both scrubbed (URLs -> `[link]`, emails ->
   `[email]`, 6+ digit runs -> `[number]`). Groups are sent as ids 1..n.
@@ -363,6 +384,8 @@ Behavior:
   be `{"groups":[{"id","label","summary"}]}`; label trimmed to 60 chars,
   summary to 300; invalid entries ignored (node keeps local label, retried next
   run). 401 or 429 stops remaining batches.
+- Observed free-tier limits (s6): 8000 tokens/min, 1000 requests; one naming
+  request used about 1.2k tokens.
 - Model output is untrusted: only ever render labels/summaries with
   `textContent`.
 
@@ -404,36 +427,60 @@ chrome.runtime.sendMessage({ type: 'SUMMARIZE' })
   → { ok: true, result: { local, cloud, note } } | { ok: false, error }
      // "Name groups now": runs summarizer.summarizeNodes() only (no tab reading);
      // shares the `running` guard with WRAP_UP.
-chrome.runtime.sendMessage({ type: 'SEARCH', query })          // s5 NEW
+chrome.runtime.sendMessage({ type: 'SEARCH', query })          // s5
   → { ok: true, results: [...searchPages result...] } | { ok: false, error }
      // NOT guarded by `running`: allowed during a wrap-up (the embed queue and the
      // offscreen refcount make that safe). First search after the model was closed
      // takes a few seconds (model start-up).
-chrome.runtime.sendMessage({ type: 'DELETE_PAGE', pageId })    // s5 NEW
+chrome.runtime.sendMessage({ type: 'DELETE_PAGE', pageId })    // s5
   → { ok: true, result: { nodesUpdated } } | { ok: false, error }
      // Runs clustering.removePage. Refused with
      // 'A wrap-up is running. Try again when it finishes.' while `running` is set
      // (also while SUMMARIZE runs); 'Invalid page id.' unless pageId is an
      // integer. Sets `running` while it works.
+chrome.runtime.sendMessage({ type: 'CLEAR_ALL' })              // s6
+  → { ok: true } | { ok: false, error }
+     // "Delete all my data". Refused with
+     // 'A wrap-up is running. Try again when it finishes.' while `running` is set;
+     // sets `running` while it works. Runs storage.clearAll() and removes
+     // chrome.storage.local `wrapUpStatus`. Does NOT touch `settings`.
 summary = { saved, embedded, unchanged, thin, asleep, skipped,
             failed: [{url, error}],
             clustered: { newPages, nodes, merged } | null,
             clusterError: string | null,
+            droppedSearch: number,            // s7
             named: { local, cloud, note } | null,
             nameError: string | null }
 ```
+Internal helpers (s7, not messages):
+```
+isLowValueUrl(url) → bool    // YouTube home '/', '/feed/*', '/results' (hosts
+                             // youtube.com / www. / m.). Tab is skipped before
+                             // reading; counted in `skipped`.
+isSearchUrl(url) → bool      // google.<tld>/search, bing.com/search,
+                             // duckduckgo.com with ?q=
+dropLoneSearchPages() → n    // for every node whose pages are ALL search pages,
+                             // clustering.removePage each; returns how many.
+                             // A search page in a node with any non-search page
+                             // is kept. Unassigned pages are not touched.
+```
 - Message tests must be sent from an extension page (popup / view tab), never
-  from the service worker console: a worker cannot message itself.
+  from the service worker console: a worker cannot message itself. Code that uses
+  `chrome.storage` must also run in an extension context (popup DevTools or the
+  worker's DevTools), not on a web page console.
 - Progress and the result are also written to `chrome.storage.local.wrapUpStatus`
   (`running` with `stage` = reading | embedding | grouping | naming and
-  `done`/`total`; then `done` with `summary`, or `error`). Each write also logs
-  `[smriti] <state> <stage> done/total` to the worker console (debug aid; remove
-  or quiet before publishing).
-- Only http(s), non-incognito tabs are read.
+  `done`/`total`; then `done` with `summary`, or `error`). The `[smriti]` console
+  log line was removed in s6; read the stored status to debug.
+- Only http(s), non-incognito tabs, in all windows, are read.
 - `thin`: extracted content under `MIN_CONTENT_CHARS` (300); not saved.
 - `asleep`: tab is discarded (Memory Saver) or not `status==='complete'`; also
   listed in `failed` with a friendly "wake it and retry" message. Tabs are never
   auto-reloaded.
+- A tab that is not discarded but unresponsive can hit the 30 s read timeout; it
+  is reported in `failed` as "Reading the tab timed out after 30s
+  [discarded=false, status=complete]" (seen s6 on heavy chat-app tabs; not
+  reproducible in s7; cause unconfirmed: a weak connection is the leading theory).
 - `unchanged`: content identical to the stored page and chunks already exist;
   not re-embedded.
 - If embedding fails, the page stays saved without chunks and is retried at the
@@ -441,42 +488,42 @@ summary = { saved, embedded, unchanged, thin, asleep, skipped,
 - **Offscreen refcount (s5):** `acquireOffscreen()` / `releaseOffscreen(delayMs)`
   count users (wrap-up = 1 for the whole tab loop; each search = 1). When the
   count reaches 0 the doc is closed immediately (`delayMs` 0, wrap-up) or after
-  an idle timer (`SEARCH_IDLE_MS` = 20 s, search; the timer is cancelled by any
-  new acquire). A `startup` promise (`closeOffscreen()` once when the worker
-  starts) clears an offscreen doc orphaned by a killed worker; WRAP_UP and SEARCH
-  await it. The count lives in worker memory only.
-- **Time limits (s5):** `withTimeout` wraps tab reading (30 s), `clusterNewPages`
-  (60 s) and `summarizeNodes` (180 s); embedding has its own 120 s per-batch
-  limit. A timeout rejects with a readable error but does not cancel the
-  underlying operation.
-- Clustering and naming run after the tab loop, each in its own try/catch.
-- Dev hooks: `globalThis.storage`, `.embeddings`, `.clustering`, `.summarizer`
-  expose the modules in the service worker console (dynamic `import()` is not
-  allowed in service workers). **Remove all four before publishing.** (`search`
-  is imported but has no hook.)
+  an idle timer (`SEARCH_IDLE_MS` = 20 s, search; cancelled by any new acquire).
+  A `startup` promise (`closeOffscreen()` once when the worker starts) clears an
+  offscreen doc orphaned by a killed worker; WRAP_UP and SEARCH await it. The
+  count lives in worker memory only.
+- **Time limits (s5, s7):** `withTimeout` wraps tab reading (30 s),
+  `clusterNewPages` (60 s), `dropLoneSearchPages` (30 s) and `summarizeNodes`
+  (180 s); embedding has its own 120 s per-batch limit. A timeout rejects with a
+  readable error but does not cancel the underlying operation.
+- Clustering (+ search-page cleanup) and naming run after the tab loop, each in
+  its own try/catch. A failure in the cleanup is reported as `clusterError`.
+- **Dev hooks: removed in s6.** For a console debugging session, temporarily add
+  `globalThis.storage = storage;` style lines and do not commit them.
 
 ### popup/popup.js
-Imports `lib/storage.js` (`getAllPages`, `getAllNodes`, `clearAll`) and the
-constants from `lib/summarizer.js` directly: extension pages share the
-extension's IndexedDB. Does not await the wrap-up reply. On open it reads
-`wrapUpStatus` and `settings`, renders the status (running progress, last
-summary, or error), the Groups list (label, page count, ", Groq" tag when
-`labelSource === 'cloud'`, hover = summary) and the saved-pages list; listens to
-`chrome.storage.onChanged` for live updates and refreshes lists when not
-running. A `running` status older than 3 minutes is treated as interrupted.
-Groq toggle: ticking it calls `chrome.permissions.request` for `GROQ_ORIGIN` as
-the first await (user gesture) and only then saves `cloudSummaries`. The key
-field saves on `change`, then clears and shows "Key saved (paste to replace)".
-"Name groups now" sends `SUMMARIZE`. **"Search & browse" (s5)** calls
-`chrome.tabs.create({ url: chrome.runtime.getURL('graph-view/graph.html') })`
-and closes the popup (no `tabs` permission needed for this). "Clear all (dev)"
-clears the DB and `wrapUpStatus` but keeps `settings`. All labels/titles are set
-with `textContent`.
+Imports `getAllPages`, `getAllNodes` from `lib/storage.js` and the constants from
+`lib/summarizer.js` directly: extension pages share the extension's IndexedDB.
+Does not await the wrap-up reply. On open it reads `wrapUpStatus` and
+`settings`, renders the status (running progress, last summary, or error), the
+Groups list (label, page count, ", Groq" tag when `labelSource === 'cloud'`,
+hover = summary) and the saved-pages list; listens to `chrome.storage.onChanged`
+for live updates and refreshes lists when not running. A `running` status older
+than 3 minutes is treated as interrupted. Groq toggle: ticking it calls
+`chrome.permissions.request` for `GROQ_ORIGIN` as the first await (user gesture)
+and only then saves `cloudSummaries`. The key field saves on `change`, then
+clears and shows "Key saved (paste to replace)". "Name groups now" sends
+`SUMMARIZE`. "Search & browse" (s5) calls `chrome.tabs.create` with the
+extension's `graph-view/graph.html` URL and closes the popup. "Delete all my
+data" (s6) shows a `confirm()` (says Groq settings are kept), sends `CLEAR_ALL`,
+shows "All saved data deleted." or the worker's error, then refreshes the lists.
+All labels/titles are set with `textContent`. (The summary line does not show
+`droppedSearch` yet.)
 
-### graph-view/graph.js (s5 NEW; extension page, ES module)
+### graph-view/graph.js (s5; extension page, ES module)
 Imports `getAllPages`, `getAllNodes` from `lib/storage.js` and reads IndexedDB
-directly (same as the popup). Keeps light page objects (`id, url, title,
-siteName, visitedAt`; no full text), the node list, and a `pageId -> node` map.
+directly. Keeps light page objects (`id, url, title, siteName, visitedAt`; no
+full text), the node list, and a `pageId -> node` map.
 - **Typing:** `input` event -> `keywordMatches(q)`: every whitespace-separated
   word must appear in `title + url + siteName` (lowercased). Shown instantly;
   status says to press Enter for semantic search. Cancels any in-flight semantic
@@ -484,8 +531,8 @@ siteName, visitedAt`; no full text), the node list, and a `pageId -> node` map.
 - **Enter (form submit):** shows keyword hits, sends `SEARCH`, ignores the reply
   if a newer query started. Merge: each semantic result keeps `sem` (the cosine)
   and `score = sem + 0.1` if it is also a keyword hit (`KEYWORD_BOOST`);
-  keyword-only hits (low or missing semantic score) are appended with score 0.1.
-  On a worker error the keyword hits stay and the status says so.
+  keyword-only hits are appended with score 0.1. On a worker error the keyword
+  hits stay and the status says so.
 - **Rendering:** results are grouped by node when the node has 2+ pages (header
   = node label, "x of y pages", tooltip = summary), otherwise one standalone row
   per page; blocks ordered by best score. Row = title link (http/https only,
@@ -494,15 +541,14 @@ siteName, visitedAt`; no full text), the node list, and a `pageId -> node` map.
   query): multi-page nodes as `<details>` (largest first), then one "Other
   pages" `<details>` with every page not in a multi-page node (newest first).
   Everything is set with `textContent`, never `innerHTML`.
-- **Delete:** `confirm()` -> sends `DELETE_PAGE` -> on success
-  reload data and re-render (results are filtered to pages that still exist);
-  on refusal `alert()` + status line with the worker's error.
+- **Delete:** `confirm()` -> sends `DELETE_PAGE` -> on success reload data and
+  re-render; on refusal `alert()` + status line with the worker's error.
 - **Refresh:** listens to `chrome.storage.onChanged` for `wrapUpStatus.state ===
   'done'` and reloads/re-renders.
-- `graph.css`: sticky header (search + status stay visible), `color-scheme:
-  light dark` with `prefers-color-scheme` tokens.
+- `graph.css`: sticky header, `color-scheme: light dark` with
+  `prefers-color-scheme` tokens.
 
-## Manifest notes (s2, changed in s4, unchanged in s5)
+## Manifest notes (s2, changed in s4, unchanged s5–s7)
 - `permissions`: storage, unlimitedStorage, scripting, idle, **offscreen**.
 - `content_security_policy.extension_pages`:
   `script-src 'self' 'wasm-unsafe-eval'; object-src 'self'` (required for WASM;
@@ -510,223 +556,222 @@ siteName, visitedAt`; no full text), the node list, and a `pageId -> node` map.
 - `optional_host_permissions`: `<all_urls>` (requested at runtime, decision 7)
   and, since s4, `https://api.groq.com/*` (requested when the user turns on
   Groq naming).
-- `description` (s4, must stay <= 132 chars): "Groups your open tabs by topic,
-  on your device. Optional AI naming sends only short, anonymized snippets."
-- s5: opening `graph-view/graph.html` with `chrome.tabs.create` needs no extra
+- `description` (must stay <= 132 chars; it is 105): "Groups your open tabs by
+  topic, on your device. Optional AI naming sends only short, anonymized
+  snippets."
+- Opening `graph-view/graph.html` with `chrome.tabs.create` needs no extra
   permission, and the page does not need `web_accessible_resources`.
+- Icons are `icons/icon16.png`, `icon48.png`, `icon128.png`.
 
 ## Key design decisions (so we don't relitigate these every session)
 
-1. **Batch ingestion, not continuous.** Embedding happens on session
-   wrap-up (user-triggered) or idle-triggered, not on every page load.
-   Passive "related content" nudge is a *lookup only* (cheap), separate
-   from ingestion (expensive).
-2. **Local embeddings first.** transformers.js (WASM, all-MiniLM-L6-v2)
-   is the primary embedding engine — free, offline, no rate limits.
-   Chrome's on-device Gemini Nano APIs used opportunistically if available.
-3. **Cloud LLM (Groq free tier) is only for summarization**, not embedding,
-   and only during batched wrap-up — never per-page, to respect free-tier
-   rate limits.
+1. **Batch ingestion, not continuous.** Embedding happens on session wrap-up
+   (user-triggered) or idle-triggered, not on every page load. Passive "related
+   content" nudge is a *lookup only* (cheap), separate from ingestion.
+2. **Local embeddings first.** transformers.js (WASM, all-MiniLM-L6-v2) is the
+   primary embedding engine — free, offline, no rate limits. Chrome's on-device
+   Gemini Nano APIs used opportunistically if available.
+3. **Cloud LLM (Groq free tier) is only for summarization**, not embedding, and
+   only during batched wrap-up — never per-page.
 4. **No auto-submit / no silent background network calls of page content.**
-   Everything stays local; only anonymized short prompts (for summarization)
-   may go to Groq, and only if the user has enabled that fallback.
-5. **Vectors stored as Float32Array** (decided session 1) — about half the
-   size of plain arrays and faster for similarity math.
-6. **On-demand extraction** (decided session 1). No `content_scripts` in the
-   manifest. The extractor is injected with `chrome.scripting.executeScript`
-   only when the user clicks "Wrap up session". Consequence: tabs closed
-   before wrap-up are not captured (a lightweight tab-URL log could address
-   this later, v2).
-7. **Runtime host access** (decided session 1). `<all_urls>` is in
-   `optional_host_permissions`; the popup calls `chrome.permissions.request`
-   on the first wrap-up click (must be the first await in the click handler,
-   it requires a user gesture). `tabs` and `activeTab` permissions removed
-   (not needed once host access is granted); re-add `tabs` only if
-   `tab.url` comes back undefined. `web_accessible_resources` removed so
-   websites cannot probe for the extension.
-8. **Inference runs in an offscreen document** (decided session 2). MV3 service
-   workers are killed after ~30 s idle; a batch embed can outlast that.
-   Reason `WORKERS`; closed after each wrap-up to free memory.
-9. **Model bundled locally, no runtime CDN** (decided session 2). MiniLM files
-   live in `models/`; transformers.js is set to local-only and its default CDN
-   WASM path is overridden to `vendor/`. Files are fetched once at dev time by
+   Only anonymized short prompts (for summarization) may go to Groq, and only if
+   the user has enabled that fallback.
+5. **Vectors stored as Float32Array** (s1) — half the size of plain arrays.
+6. **On-demand extraction** (s1). No `content_scripts` in the manifest. The
+   extractor is injected with `chrome.scripting.executeScript` only when the
+   user clicks "Wrap up session". Consequence: tabs closed before wrap-up are
+   not captured (a lightweight tab-URL log could address this later, v2).
+7. **Runtime host access** (s1). `<all_urls>` is in `optional_host_permissions`;
+   the popup calls `chrome.permissions.request` on the first wrap-up click (must
+   be the first await in the click handler; it needs a user gesture). `tabs` and
+   `activeTab` permissions removed; re-add `tabs` only if `tab.url` comes back
+   undefined. `web_accessible_resources` removed so websites cannot probe for
+   the extension.
+8. **Inference runs in an offscreen document** (s2). MV3 service workers are
+   killed after ~30 s idle; a batch embed can outlast that. Reason `WORKERS`.
+9. **Model bundled locally, no runtime CDN** (s2). MiniLM files live in
+   `models/`; transformers.js is set to local-only and its default CDN WASM path
+   is overridden to `vendor/`. Files are fetched once at dev time by
    `download-model.mjs`, and are gitignored, so cloners rebuild them.
-10. **Chunking** (decided session 2): ~200 words, ~30 words overlap, paragraph
-    boundaries first, max 60 chunks per page (MiniLM truncates at ~256 tokens).
-11. **Asleep tabs are skipped and reported, never auto-reloaded** (decided
-    session 2). Reloading would silently hit the network for sites the user has
-    open, which conflicts with the privacy promise. A "wake and retry" button
-    could be an explicit opt-in later.
-12. **Clustering thresholds are chosen empirically** (decided s2, DONE s3). Scores
-    were logged between real saved pages; see decisions 13–14 for the result.
-13. **Page-level matching** (decided session 3). One vector per page (normalized
-    mean of chunk vectors); nodes keep a centroid of their pages' vectors.
-    Chunk-level (max chunk similarity) was rejected: one generic chunk
-    (nav/boilerplate) matches anything and produced false matches.
-14. **Two-stage thresholds** (decided session 3). Assignment `THRESHOLD = 0.50`
-    (0.55 left too many pages alone; 0.45 merged unrelated pages). Then a merge
-    pass at `MERGE_THRESHOLD = 0.52` fixes centroid dilution (a growing node's
-    average gets blurrier, so its own relatives score lower). Group pairs that
-    should merge scored 0.553–0.602; the next pair down was 0.493. Both are
-    named constants and can be re-tuned with `reclusterAll(t, m)` +
-    `showClusters()` / `showMergeCandidates()`.
-15. **Readability is gated against an `innerText` baseline** (decided session 3):
-    use Readability only if >= 30% of the page's visible text, else fall back.
-    Heuristic, not site-specific.
-16. **Wrap-up status lives in `chrome.storage.local`** (decided session 3). MV3
-    popups are destroyed when they lose focus, so the popup never waits on the
-    reply; it renders stored status and updates via `storage.onChanged`.
-17. **Clustering failure must not lose wrap-up work** (decided session 3).
-    Clustering is in its own try/catch after the tab loop; unclustered pages are
-    picked up by the next wrap-up.
-18. **No bigger embedding model for now** (decided session 3). Remaining errors
-    come from short/low-text pages, not model quality. If more quality is
-    needed: prepend the title to the embedded text, filter junk pages, then
-    consider a similar-size model (e.g. bge-small).
-19. **Node cleanup is atomic in storage; vector math stays in clustering**
-    (decided session 4). `storage.deletePage` removes the page from nodes and
-    deletes empty nodes in one transaction (no ML logic in storage);
-    `clustering.removePage` then recomputes centroids of surviving nodes.
+10. **Chunking** (s2): ~200 words, ~30 words overlap, paragraph boundaries
+    first, max 60 chunks per page (MiniLM truncates at ~256 tokens).
+11. **Asleep tabs are skipped and reported, never auto-reloaded** (s2). Reloading
+    would silently hit the network for sites the user has open, which conflicts
+    with the privacy promise. A "wake and retry" button could be an opt-in later.
+12. **Clustering thresholds are chosen empirically** (s2, done s3); see 13–14.
+13. **Page-level matching** (s3). One vector per page (normalized mean of chunk
+    vectors); nodes keep a centroid of their pages' vectors. Chunk-level (max
+    chunk similarity) was rejected: one generic chunk matches anything.
+14. **Two-stage thresholds** (s3). Assignment `THRESHOLD = 0.50` (0.55 left too
+    many pages alone; 0.45 merged unrelated pages). Then a merge pass at
+    `MERGE_THRESHOLD = 0.52` fixes centroid dilution. Pairs that should merge
+    scored 0.553–0.602; the next pair down was 0.493. Both are named constants
+    and can be re-tuned with `reclusterAll(t, m)` + `showClusters()` /
+    `showMergeCandidates()`.
+15. **Readability is gated against an `innerText` baseline** (s3): use it only
+    if >= 30% of the page's visible text, else fall back.
+16. **Wrap-up status lives in `chrome.storage.local`** (s3). MV3 popups are
+    destroyed when they lose focus, so the popup renders stored status and
+    updates via `storage.onChanged`.
+17. **Clustering failure must not lose wrap-up work** (s3). Clustering is in its
+    own try/catch after the tab loop; unclustered pages are picked up by the
+    next wrap-up.
+18. **No bigger embedding model for now** (s3). Remaining errors come from
+    short/low-text pages, not model quality. If more is needed: filter junk
+    pages, then consider a similar-size model (e.g. bge-small).
+19. **Node cleanup is atomic in storage; vector math stays in clustering** (s4).
+    `storage.deletePage` removes the page from nodes and deletes empty nodes in
+    one transaction; `clustering.removePage` then recomputes centroids.
     `clusterNewPages` also prunes stale ids first, so the data heals itself.
-20. **Every node always gets a local label** (decided session 4): title of its
-    most central page. The extension is fully useful with Groq off.
-21. **Groq naming is opt-in, default off, groups of 2+ pages only** (decided
-    session 4). Singletons keep their title; sending one page to a model adds no
-    information and only costs quota and privacy.
-22. **What leaves the machine, exactly** (decided session 4): per multi-page
-    group, up to 4 central pages, title (<=100 chars) + first 150 chars of
-    content, scrubbed of links/emails/6+ digit numbers; groups numbered 1..n; no
-    URLs, no full text, no database ids; batches of 5 groups; only when the
-    toggle is on, a key is saved, and `api.groq.com` permission is granted
-    (requested at runtime, optional host permission). **Search sends nothing
-    anywhere (s5): the query is embedded on the device.**
-23. **Re-naming is change-driven** (decided session 4): `node.summaryKey` (sorted
-    pageIds) detects a changed page set; `node.labelSource` ('local' | 'cloud')
-    lets multi-page nodes be upgraded when the user turns cloud on later.
-    Repeat wrap-ups with no changes cost nothing.
+20. **Every node always gets a local label** (s4): title of its most central
+    page. The extension is fully useful with Groq off.
+21. **Groq naming is opt-in, default off, groups of 2+ pages only** (s4).
+    Singletons keep their title; sending one page adds no information and only
+    costs quota and privacy.
+22. **What leaves the machine, exactly** (s4): per multi-page group, up to 4
+    central pages, title (<=100 chars) + first 150 chars of content, scrubbed of
+    links/emails/6+ digit numbers; groups numbered 1..n; no URLs, no full text,
+    no database ids; batches of 5 groups; only when the toggle is on, a key is
+    saved, and `api.groq.com` permission is granted. Search sends nothing
+    anywhere (s5): the query is embedded on the device. Verified in s6 with the
+    worker's Network tab: one POST to api.groq.com when on, nothing external
+    when off.
+23. **Re-naming is change-driven** (s4): `node.summaryKey` detects a changed
+    page set; `node.labelSource` lets multi-page nodes be upgraded when the user
+    turns cloud on later. Repeat wrap-ups with no changes cost nothing.
 24. **Page text is untrusted input to the model; model output is untrusted
-    output** (decided session 4): prompt says to ignore instructions in the
-    data, reply is parsed as JSON and validated/trimmed, and labels/summaries are
-    rendered only with `textContent`.
-25. **Groq key stored in `chrome.storage.local`, unencrypted** (decided session
-    4), readable only by the extension; to be stated in the README. Chrome has no
-    secure vault for extensions.
-26. **Groq model is a constant** (decided session 4): `openai/gpt-oss-20b`
-    (small, fast; `llama-3.1-8b-instant` was not in the user's Groq model list).
-    Edit `GROQ_MODEL` in `lib/summarizer.js` if Groq changes its lineup.
-27. **Title-in-embedding experiment deferred to the next version** (decided
-    session 4). Do not forget it: see Pending decisions.
-28. **Search ranks by page vector; chunks only supply the snippet** (decided
-    session 5). Consistent with decision 13: a single generic chunk can match
-    any query, so chunks never influence ranking. Score = cosine between the
-    query and the normalized page vector.
-29. **Hybrid results with an instant keyword path** (decided session 5). While
-    typing, title/URL/site keyword matches appear instantly from IndexedDB (no
-    model). Enter runs the semantic search (first run takes a few seconds while
-    the model starts). Pages matching both get +0.1; keyword-only hits are kept
-    below. `MIN_SCORE = 0.25` was validated on real queries (junk query -> 0
-    results; a real query -> only relevant pages, 25%–50%).
-30. **The offscreen document is shared and reference-counted** (decided session
-    5). Wrap-up and search are both users; the doc closes only when nobody uses
-    it, stays open 20 s after a search so follow-up searches are fast, and an
-    orphan left by a killed worker is closed on startup. (Before this, a
-    finishing wrap-up would have closed the model under a running search.)
-31. **Inference is serialized and every long step has a time limit** (decided
-    session 5). One embed batch at a time (queue in `lib/embeddings.js`), 120 s
-    per batch with a model reset on failure, and time limits on tab reading,
-    grouping and naming, so a hang becomes an error in the wrap-up summary and
-    `running` cannot stay set because of it.
-32. **Search is unguarded; delete is guarded** (decided session 5). Search only
-    reads and is safe alongside a wrap-up. `DELETE_PAGE` writes pages, chunks,
-    nodes and centroids, so it is refused while `running` is set and sets it
-    while it works.
-33. **Reads direct, writes and embedding via the worker** (decided session 5).
-    Extension pages (popup, search view) read IndexedDB directly; anything that
-    needs the model or writes shared state goes through the service worker,
-    which owns the offscreen document and the `running` guard.
-34. **Singletons are listed together under "Other pages"** (decided session 5).
-    A one-page node's label is just its title, so a heading per singleton adds
-    nothing; rows show host and site name instead, which also copes with noisy
-    titles.
+    output** (s4): the prompt says to ignore instructions in the data, the reply
+    is parsed as JSON and validated/trimmed, and labels/summaries are rendered
+    only with `textContent`.
+25. **Groq key stored in `chrome.storage.local`, unencrypted** (s4), readable
+    only by the extension; stated in the README since s6. Chrome has no secure
+    vault for extensions.
+26. **Groq model is a constant** (s4): `openai/gpt-oss-20b`. Edit `GROQ_MODEL`
+    in `lib/summarizer.js` if Groq changes its lineup.
+27. **Title-in-embedding experiment** (deferred s4, DONE s7): see decision 42.
+28. **Search ranks by page vector; chunks only supply the snippet** (s5).
+    Consistent with decision 13.
+29. **Hybrid results with an instant keyword path** (s5). While typing,
+    title/URL/site keyword matches appear instantly (no model). Enter runs the
+    semantic search. Pages matching both get +0.1. `MIN_SCORE = 0.25` was
+    validated on real queries.
+30. **The offscreen document is shared and reference-counted** (s5). Wrap-up and
+    search are both users; the doc closes only when nobody uses it, stays open
+    20 s after a search, and an orphan left by a killed worker is closed on
+    startup.
+31. **Inference is serialized and every long step has a time limit** (s5). One
+    embed batch at a time, 120 s per batch with a model reset on failure, and
+    time limits on tab reading, grouping and naming, so a hang becomes an error
+    in the wrap-up summary and `running` cannot stay set because of it.
+32. **Search is unguarded; delete is guarded** (s5). `DELETE_PAGE` writes pages,
+    chunks, nodes and centroids, so it is refused while `running` is set.
+33. **Reads direct, writes and embedding via the worker** (s5). Extension pages
+    read IndexedDB directly; anything that needs the model or writes shared
+    state goes through the service worker.
+34. **Singletons are listed together under "Other pages"** (s5); rows show host
+    and site name instead of a heading per singleton.
+35. **"Delete all my data" goes through the worker and keeps settings** (s6):
+    the popup confirms, then sends `CLEAR_ALL` (refused while `running`). The
+    Groq toggle and key are kept.
+36. **Debug tooling is removed from the shipped code** (s6): dev hooks and the
+    `[smriti]` log are gone; the stored `wrapUpStatus` is the debugging record.
+37. **License: MIT** (s6). Readability stays Apache-2.0 with its header kept.
+38. **The public repo was audited rather than rewritten** (s6): history searched
+    for the Groq key prefix (clean); generated and editor folders untracked. A
+    leaked key, if one ever appears, must be revoked first and history cleaned
+    second.
+39. **Privacy claims are checked against real traffic, not only the code** (s6):
+    open the service worker's DevTools, watch the Network tab through a wrap-up
+    with the Groq toggle off (expect nothing external) and on with a 2+ page
+    group (expect one POST to `api.groq.com`). Repeat whenever the summarizer or
+    any `fetch` changes.
+40. **Low-value pages are handled in two ways** (s7). (a) YouTube home,
+    `/feed/*` and `/results` are skipped by URL before reading: they are never
+    useful and skipping touches no content. (b) Search-result pages (Google,
+    Bing, DuckDuckGo) are saved and embedded like any page, then deleted after
+    grouping if their node contains no non-search page. Whether a search is
+    related to anything can only be known after embedding and grouping, and this
+    reuses the existing 0.50 threshold, so nothing new to tune. Chosen over a
+    blanket search-page skip because a search can be research context.
+41. **GitHub-only for now** (s7). No Chrome Web Store listing or privacy policy
+    work until the user decides otherwise.
+42. **Title-in-embedding was tested and rejected** (s7). Variant: prepend the
+    page title (first 150 chars) as its own paragraph before the body passed to
+    `embedPage`. A/B on the same 11 open pages (wipe and re-run each time):
+    identical groups with and without the title. No measurable benefit, so it was
+    reverted (extra code without evidence). Limitation: 11 pages cannot
+    reproduce the original large-group problem; re-test only with 30+ pages.
+43. **Tab read timeouts are parked** (s7). Not reproducible: tabs that timed out
+    once saved fine later, both when brought to the front and when left in the
+    background, so the frozen-tab theory is unconfirmed. Leading theory: a weak
+    connection left heavy single-page apps half-loaded at `status=complete`.
+    No code change until it recurs with notes (connection, time in background).
 
 ## Pending decisions
 
-- **Title-in-embedding (DEFERRED, next version):** prepend the page title to
-  the text passed to `embedPage` to help short pages (web3 split, small-set
-  singletons, loose YouTube pages in the big exam group). Test: change the
-  embedded text, `reclusterAll()`, `showClusters()`; keep only if groups improve
-  with no wrong merges.
-- Whether to blocklist low-value sites (Google Search, YouTube feed/home) or
-  raise the minimum length for them.
+- Whether to blocklist more low-value pages (tiny pages, other feeds), beyond
+  the s7 rules.
 - Re-assigning changed pages (and relabeling their node).
 - Showing the URL path in result rows (so same-title, same-host pages can be
   told apart).
 - Inline delete confirmation instead of `confirm()` / `alert()`.
-- Which license for the repo.
+- A "Remove saved Groq key" button (the key currently survives "Delete all my
+  data").
+- Showing `droppedSearch` in the popup summary.
 - Future: strategy for capturing closed tabs / reading history (v2).
+- (Resolved s7: GitHub-only; title-in-embedding rejected; docs anonymized.)
 
 ## Known issues / tuning
 
+- **Tab read timeouts (parked, s7):** see decision 43.
+- **Unrelated search tabs that stay open** are re-read and re-embedded at every
+  wrap-up, then dropped again (small cost, no data loss). A search page whose
+  related tabs are not open yet is dropped.
+- **Groq free tier is 8000 tokens per minute** (s6): one naming request used
+  about 1.2k tokens; many groups could hit a 429. The code stops the remaining
+  batches and keeps local labels. Candidate README limitation line.
 - **Changed pages are not re-grouped** (they stay in their old node, and the
   node label is not refreshed since `summaryKey` is unchanged; use
-  `reclusterAll()` then "Name groups now"). OPEN.
-- **Labels drift**: a node is relabeled whenever its page set changes (also
-  after a delete), at the next wrap-up or "Name groups now", and Groq may word
-  it differently. OPEN.
-- **Large mixed group**: a 20-page exam-prep group holds off-topic low-text
-  pages (YouTube cooking video, "Recordings - OneDrive", bare "YouTube").
-  Related to title-in-embedding and the blocklist. OPEN.
+  `reclusterAll()` then "Name groups now").
+- **Labels drift**: a node is relabeled whenever its page set changes, and Groq
+  may word it differently.
+- **Large mixed group**: a big exam-prep style group can hold off-topic low-text
+  pages. Title-in-embedding did not help at 11 pages; untested at 30+.
 - **Result rows show only the host**; same-title pages from one host look like
-  duplicates. OPEN (small polish).
+  duplicates (small polish).
 - **Singleton labels in the popup Groups list are raw page titles**, sometimes
-  noisy (bare "YouTube"). The search view lists singletons under "Other pages"
-  with host/site instead. Partly addressed.
-- **Web3 pages are split** into small groups with some alone (short pages like
-  login screens). Deferred title-in-embedding experiment. OPEN.
-- **Small page sets give noisy groups** (14 pages: related AI/Google pages left
-  alone). Re-check with more pages. OPEN.
-- **Very long pages are truncated by the 60-chunk cap** (Kore.ai release notes:
-  88k chars, ~80% never embedded). OPEN, low priority.
-- **Low-value pages** (Google Search, YouTube feed, tiny pages) add noise.
-  OPEN.
-- **Titles:** Readability strips site-name suffixes; some pages have title
-  `""` (IIT Kanpur); display helpers and the summarizer fall back to the URL
-  hostname.
+  noisy. The search view lists singletons under "Other pages".
+- **Small page sets give noisy groups**: related pages can stay alone.
+- **Very long pages are truncated by the 60-chunk cap** (a long release-notes
+  page: ~80% never embedded). Low priority.
+- **Titles:** Readability strips site-name suffixes; some pages have title `""`;
+  display helpers and the summarizer fall back to the URL hostname.
 - **Extractor diagnostics** (`readabilityChars`, `bodyChars`) are not saved.
 - **Stale `running` status** if the worker is killed or the extension is
-  reloaded mid-run (popup shows "Working" until 3 minutes pass, then
-  "interrupted"). Timeouts (decision 31) reduce hangs but do not remove this.
-- **Timeouts do not cancel the underlying work** (a timed-out step may still
-  finish in the background).
-- **The s5 wrap-up hang had no confirmed root cause** (first run "interrupted",
-  retry "already running"; fixed in practice by the embed queue + timeouts).
-  If it recurs: read `wrapUpStatus` and the `[smriti]` log lines.
+  reloaded mid-run (popup shows "Working" until 3 minutes pass).
+- **Timeouts do not cancel the underlying work.**
 - **Search cost grows with the library**: every search loads all chunks with
-  embeddings and loops over them; fine at personal scale. The view loads full
-  page records and keeps only light fields.
+  embeddings; fine at personal scale.
+- **Saved pages outlive their tabs**, and "Delete all my data" wipes them for
+  good (s7 gotcha: it also makes before/after experiments hard to reproduce).
 - **Transient embed error** "Receiving end does not exist" can happen while the
   offscreen model starts; the page is retried at the next wrap-up.
-- **"Saved 8" but 7 pages listed** in one wrap-up (not reproduced; low
-  priority).
+- **"Saved 8" but 7 pages listed** in one wrap-up (not reproduced).
 - **Groq model names and free-tier limits can change** (400/404 = check the
   model name; 429 = naming stops for that run, local labels stay).
 - Fixed: deleted pages remaining in node `pageIds` (s4); thin pages and asleep
-  tabs (s2); no way to delete a page from the UI and the unverified multi-page
-  `removePage` path (s5); search and wrap-up sharing one offscreen doc (s5).
+  tabs (s2); no way to delete a page from the UI, and the unverified multi-page
+  `removePage` path (s5); search and wrap-up sharing one offscreen doc (s5); dev
+  hooks, debug log, dev-only clear button, placeholder icons, outdated README
+  (s6); YouTube home/feed pages and lone search pages adding noise (s7).
 
-## PRE-PUBLISH CHECKLIST (do not forget)
+## PRE-PUBLISH CHECKLIST (status, unchanged since s6)
 
-1. Remove the four dev hooks in `background/service-worker.js`
-   (`globalThis.embeddings/.storage/.clustering/.summarizer`).
-2. Remove the "Clear all (dev)" button and handler from the popup.
-3. Remove or quiet the `console.log('[smriti]', ...)` line in `setStatus`
-   (`background/service-worker.js`).
-4. README: add the line that the Groq key is stored unencrypted on the user's
-   device; add a license; add a screenshot/GIF; mention the search view.
-5. Test the README setup steps from a fresh clone.
-6. Keep the manifest description <= 132 chars; replace placeholder icons.
-7. Re-read the privacy claims (README, manifest, popup) against what the code
-   actually sends.
+All items done (dev hooks removed, "Delete all my data", log line removed,
+README unencrypted-key line + license + search view, fresh-clone test, manifest
+description <= 132 chars, real icons, privacy claims checked against traffic,
+history scanned for secrets). Only an OPTIONAL README screenshot/GIF remains
+(take it from a clean clone with neutral tabs, not from real browsing).
 
 ## Sync SOP (VS Code ↔ chat ↔ Project knowledge base)
 
@@ -734,61 +779,69 @@ siteName, visitedAt`; no full text), the node list, and a `pageId -> node` map.
 - **Knowledge base holds only:** `ARCHITECTURE.md`, `PROJECT_STATE.md`,
   `manifest.json`. No source code (goes stale, and stale is worse than absent).
 - **Per session:** paste full current content of any file about to be edited
-  (not diffs) → Claude replies with complete files → copy into VS Code and
-  test → paste console errors verbatim → commit after each working chunk.
+  (not diffs) → Claude replies with complete files or exact edit locations →
+  copy into VS Code and test → paste console errors verbatim → commit after
+  each working chunk. Before committing run `git status` first, then
+  `git add`, commit, push.
 - **End of session:** Claude produces updated `PROJECT_STATE.md` (and
-  `ARCHITECTURE.md` if design or interfaces changed). Save to repo, commit,
-  and **replace the copies in the Project knowledge base** (including
-  `manifest.json` when it changed; it did NOT change in session 5).
+  `ARCHITECTURE.md` if design or interfaces changed). Save to repo, COMMIT them
+  (in s6 they were replaced in the knowledge base but never committed), and
+  replace the copies in the Project knowledge base (including `manifest.json`
+  when it changed).
 - **Interfaces section** above replaces the need to paste finished modules
   into every chat. Paste a module's source only when it is being edited.
 - What is pasted in chat always overrides the knowledge base if they disagree.
-- Claude cannot read repo file contents from GitHub (automated access is
-  blocked), so the repo link is a reference only.
+- Claude cannot read repo file contents from GitHub, so the repo link is a
+  reference only.
 - Generated/large files (`node_modules/`, `vendor/`, `models/Xenova/`,
   `offscreen/offscreen.bundle.js`) are gitignored; never paste them in chat.
-- Console tests that send messages (`chrome.runtime.sendMessage`) must run in
-  an extension page's DevTools (popup or the search view tab), not in the
-  service worker console.
+- Console tests that send messages must run in an extension page's DevTools
+  (popup or the search view tab), not in the service worker console. To watch
+  the worker's network requests, open the worker's own DevTools
+  (`chrome://extensions` > "service worker").
+- Keep examples in these docs generic (the repo is public): no real page names
+  from personal browsing, no local drive paths.
 
-## MVP feature scope (v1 — build this first)
+## MVP feature scope (v1)
 
-- [x] Manual "Wrap up session" trigger from popup (working; live status s3)
-- [x] Content extraction from all open tabs (working; Readability gating s3)
-- [x] Local embedding of extracted content (offscreen + MiniLM, tested s2)
-- [x] Similarity-threshold clustering (page-level, 0.50 + merge 0.52, tested s3)
-- [x] IndexedDB storage of pages/chunks/nodes (lib/storage.js, tested s1)
-- [x] Node labels/summaries: local always, Groq opt-in (tested s4)
-- [x] README for GitHub (written s4)
-- [x] Search view (list-based, not visual graph) over accumulated nodes, with
-      delete (tested s5)
-- [ ] Pre-publish checklist (above)  ← NEXT
+- [x] Manual "Wrap up session" trigger from popup
+- [x] Content extraction from all open tabs (Readability gating s3)
+- [x] Local embedding of extracted content (offscreen + MiniLM, s2)
+- [x] Similarity-threshold clustering (page-level, 0.50 + merge 0.52, s3)
+- [x] IndexedDB storage of pages/chunks/nodes
+- [x] Node labels/summaries: local always, Groq opt-in (s4)
+- [x] README for GitHub (s4, rewritten s6)
+- [x] Search view (list-based) with delete (s5)
+- [x] Pre-publish checklist (s6; only the optional screenshot remains)
+- [x] Delete all my data (s6)
+- [x] Low-value page filter (s7)
 
 ## Build order (bottom-up)
 
 1. `lib/storage.js` written
-2. `content/extractor.js` + `lib/readability.js` written (vendor Readability manually)
-3. Minimal `background/service-worker.js` + `popup/` + icons (v0, for testing 1 and 2)
-4. Test 1–3 in Chrome (done, session 1)
-5. `lib/embeddings.js` + `offscreen/` + build tooling, wired into wrap-up (done, session 2)
-6. `lib/clustering.js` with measured thresholds (done, session 3)
-7. Service worker clusters after wrap-up; popup shows full summary and live
-   status (done, session 3)
-8. Stale-node cleanup + `lib/summarizer.js` + popup Groups list and Groq
-   settings + manifest Groq permission (done, session 4)
-9. `lib/search.js` + `graph-view/` list/search view + SEARCH/DELETE_PAGE +
-   shared offscreen refcount + embed queue and timeouts + popup button (done,
-   session 5)
-10. Pre-publish checklist, then v2 polish ← next (session 6)
+2. `content/extractor.js` + `lib/readability.js` written
+3. Minimal service worker + popup + icons (v0)
+4. Test 1–3 in Chrome (s1)
+5. `lib/embeddings.js` + `offscreen/` + build tooling (s2)
+6. `lib/clustering.js` with measured thresholds (s3)
+7. Worker clusters after wrap-up; popup shows full summary and live status (s3)
+8. Stale-node cleanup + `lib/summarizer.js` + Groq settings (s4)
+9. `lib/search.js` + `graph-view/` + SEARCH/DELETE_PAGE + refcount + queue (s5)
+10. Pre-publish checklist (s6)
+11. v2 polish: low-value filter (done s7); title-in-embedding (tested, rejected
+    s7); tab read timeouts (parked s7); small polish items ← next (s8)
 
 ## Stretch goals (v2, only after v1 is solid)
 
-- [ ] Title-in-embedding experiment (deferred from s4)
+- [x] Title-in-embedding experiment (s7: no benefit at 11 pages, rejected)
+- [~] Tab read timeouts (parked, not reproducible)
 - [ ] Passive "related content" nudge on new page load
 - [ ] Visual node-graph UI
 - [ ] Duplicate/stale tab detection
 - [ ] Actionability triage (read-later / reference / active-task)
 - [ ] Capture tabs closed before wrap-up
 - [ ] Opt-in "wake asleep tabs and retry" button
-- [ ] Re-grouping of changed pages; blocklist for low-value sites
+- [ ] Re-grouping of changed pages; more low-value rules
 - [ ] URL path in result rows; inline delete confirmation
+- [ ] "Remove saved Groq key" button
+- [ ] Chrome Web Store listing and privacy policy (dropped for now, decision 41)
