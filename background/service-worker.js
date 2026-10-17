@@ -20,6 +20,48 @@ const STATUS_KEY = 'wrapUpStatus';
 const SEARCH_IDLE_MS = 20 * 1000; // keep the model warm briefly for follow-up searches
 let running = false;
 
+// s7: low-value page rules.
+// Skipped before reading (URL only): YouTube home, feed and search results.
+function isLowValueUrl(url) {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^(www|m)\./, '');
+    if (host === 'youtube.com') {
+      const p = u.pathname;
+      return p === '/' || p.startsWith('/feed/') || p === '/results';
+    }
+  } catch { /* bad URL: not low-value */ }
+  return false;
+}
+
+// Search result pages are saved, but kept only if they group with a real page.
+function isSearchUrl(url) {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, '');
+    if (/^google\.[a-z.]+$/.test(host) || host === 'bing.com') return u.pathname === '/search';
+    if (host === 'duckduckgo.com') return u.searchParams.has('q');
+  } catch { /* ignore */ }
+  return false;
+}
+
+// After grouping: delete search pages whose group contains no non-search page.
+async function dropLoneSearchPages() {
+  const searchIds = new Set(
+    (await storage.getAllPages()).filter((p) => isSearchUrl(p.url)).map((p) => p.id)
+  );
+  if (!searchIds.size) return 0;
+  let dropped = 0;
+  for (const n of await storage.getAllNodes()) {
+    if (n.pageIds.some((id) => !searchIds.has(id))) continue; // has a real page: keep
+    for (const id of n.pageIds) {
+      await clustering.removePage(id);
+      dropped++;
+    }
+  }
+  return dropped;
+}
+
 // ---------- shared offscreen document (wrap-up + search) ----------
 
 let offscreenUsers = 0;
@@ -93,6 +135,7 @@ async function wrapUpSession() {
     clusterError: null,
     named: null,
     nameError: null,
+    droppedSearch: 0,    
   };
 
   acquireOffscreen();
@@ -101,7 +144,7 @@ async function wrapUpSession() {
       const tab = tabs[i];
       await setStatus({ state: 'running', stage: 'reading', done: i, total: tabs.length, startedAt });
 
-      if (!tab.url || !/^https?:/.test(tab.url) || tab.incognito) {
+      if (!tab.url || !/^https?:/.test(tab.url) || tab.incognito || isLowValueUrl(tab.url)) {
         summary.skipped++;
         continue;
       }
@@ -173,6 +216,7 @@ async function wrapUpSession() {
   try {
     await setStatus({ state: 'running', stage: 'grouping', done: tabs.length, total: tabs.length, startedAt });
     summary.clustered = await withTimeout(clustering.clusterNewPages(), 60 * 1000, 'Grouping');
+    summary.droppedSearch = await withTimeout(dropLoneSearchPages(), 30 * 1000, 'Cleaning search pages');
   } catch (err) {
     summary.clusterError = String(err?.message || err);
   }
