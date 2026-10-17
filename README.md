@@ -33,8 +33,8 @@ Privacy is the point of this project, so here is exactly what happens:
 - **Incognito tabs are never read.** Only http(s) pages are processed. Sleeping tabs are skipped, never reloaded.
 - **Search sends nothing anywhere.** Your query is embedded locally.
 - **Optional cloud naming (off by default).** If you turn it on and add your own Groq API key, topics with 2+ pages are named by a Groq model. For each topic, only the titles and the first 150 characters of up to 4 pages are sent, with links, emails, and long numbers removed and topics numbered 1..n. No URLs, no full page text, no database IDs. Singletons are never sent. The `api.groq.com` permission is requested only when you turn the toggle on. Without it, everything still works with local labels.
-- **Your Groq key is stored unencrypted** in `chrome.storage.local` on your device, readable only by this extension. Chrome has no secure vault for extensions. You can revoke the key at any time in the Groq console.
-- **You can delete everything.** "Delete all my data" in the popup removes all saved pages, chunks, and topics. Individual pages can be deleted from the search view.
+- **Your Groq key is stored unencrypted** in `chrome.storage.local` on your device, readable only by this extension. Chrome has no secure vault for extensions. You can remove it with "Remove saved Groq key" in the popup, and revoke it at any time in the Groq console.
+- **You can delete everything.** "Delete all my data" in the popup removes all saved pages, chunks, and topics (your Groq settings are kept; remove the key separately). Individual pages can be deleted from the search view.
 
 ## Tech highlights
 
