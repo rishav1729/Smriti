@@ -15,7 +15,7 @@ Tab hoarding is a memory problem. You open twenty tabs across exam prep, a side 
 ## How it works
 
 1. **Wrap up session.** You click a button in the popup. Nothing runs in the background and nothing is captured automatically.
-2. **Extract.** The extractor is injected into your open tabs on demand and pulls the readable text (Mozilla Readability, with a fallback to visible text for app-style pages).
+2. **Extract.** The extractor is injected into your open tabs on demand and pulls the readable text (Mozilla Readability, with a fallback to visible text for app-style pages). YouTube home, feed, and search-results pages are skipped by URL before anything is read.
 3. **Embed.** Text is chunked and embedded into 384-dimension vectors by `all-MiniLM-L6-v2`, running in WebAssembly inside an offscreen document. The model ships with the extension and is loaded from local files.
 4. **Cluster.** Each page becomes one vector (the mean of its chunks). Pages join the most similar existing topic if the similarity is at least 0.50, otherwise they start a new one. A second pass merges topics whose centroids score at least 0.52.
 5. **Name.** Every topic gets a local label (the title of its most central page). Optionally, topics with 2+ pages can be named by Groq (see [Privacy](#privacy)).
@@ -99,13 +99,16 @@ Full design notes and decisions are in [ARCHITECTURE.md](ARCHITECTURE.md).
 - [x] Search and browse view with page deletion
 - [x] Delete all data
 - [ ] Re-grouping of changed pages
-- [ ] Blocklist for low-value pages (search results, feeds)
+- [x] Skip YouTube home/feed pages and drop lone search-result pages
+- [ ] More low-value page rules
 
 **Later:** related-content nudge on new pages, visual graph view, duplicate-tab detection, capturing tabs closed before wrap-up.
 
 ## Known limitations
 
-- Pages with very little text (login screens, search result pages) group poorly.
+- Pages with very little text (login screens, app shells) group poorly.
+- YouTube home, feed, and search-results pages are skipped before reading. Google, Bing, and DuckDuckGo search pages are kept only if they group with a real page, and are otherwise dropped after grouping. A search whose related tabs are not open yet is dropped too.
+- Groq's free tier allows about 8,000 tokens per minute. With many topics, cloud naming can stop on a rate limit (429). The remaining topics keep their local labels and are retried on the next run.
 - Very long pages are capped at 60 chunks, so the tail is not embedded.
 - Changed pages are not automatically re-grouped yet.
 - A topic's name can change when its pages change, and a cloud model may word it differently.
